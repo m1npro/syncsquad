@@ -46,6 +46,12 @@ function selectedSession(id){const accounts=joined()[id]||{};const preferred=loc
 function shareURL(id){return location.origin+'/?room='+encodeURIComponent(id);}
 function toast(message){const box=document.createElement('div');box.className='message';box.textContent=message;document.getElementById('toast').appendChild(box);setTimeout(()=>box.remove(),4300)}
 function closeDialog(){dialog.hidden=true;dialog.innerHTML='';if(current)render();}
+function modalHead(title,description=''){
+ return `<div class="dialog-head">
+   <div><h2>${escapeHTML(title)}</h2>${description?`<p>${escapeHTML(description)}</p>`:''}</div>
+   <button type="button" class="close-btn" data-action="close" aria-label="Đóng cửa sổ" title="Đóng">${icon('x',18)}</button>
+ </div>`;
+}
 function modal(html){dialog.innerHTML=`<div class="dialog" role="dialog" aria-modal="true">${html}</div>`;dialog.hidden=false;icons();}
 function icons(){if(window.lucide)lucide.createIcons()}
 function button(text,action,iconName='',cls='btn',extra=''){return `<button class="${cls}" data-action="${action}" ${extra}>${iconName?icon(iconName,15):''}${text}</button>`}
