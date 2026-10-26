@@ -362,12 +362,6 @@ if(act==='editProject'){
  if(!p)return toast('Không tìm thấy đồ án');
  return projectDialog(p);
 }
-if(act==='openProject'){
- if(working)return;
- working=true;
- await switchProject(id,'tasks');
- return;
-}
 if(act==='saveProject'){
  if(you().role!=='admin')return toast('Chỉ trưởng nhóm được tạo hoặc sửa đồ án');
  if(working)return;
@@ -382,6 +376,7 @@ if(act==='saveProject'){
    localStorage.setItem('syncsquad-project-'+roomId,result.projectId);
    tab='tasks';
  }
+ roomProjectMenuOpen=false;
  await getState();
  render();
  toast(id?'Đã cập nhật đồ án':'Đã tạo đồ án mới cho nhóm!');
