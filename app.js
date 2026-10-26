@@ -7,6 +7,22 @@ const ACTIVE_TABS={overview:'Tổng quan',schedule:'Lịch rảnh',tasks:'Nhiệ
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog');
 let current=null,roomId=null,session=null,tab='overview',editingBusy=false,drag=null,banner='',chart=null,pollTimer=null,rouletteResult='',working=false;
 let publicRoom=null,selectedMemberId=null,selectedProjectId=null,roomProjectMenuOpen=false;
+const SIDEBAR_PREF_KEY='syncsquad-sidebar-open';
+let sidebarOpen=(()=>{
+ const value=localStorage.getItem(SIDEBAR_PREF_KEY);
+ return value===null?!window.matchMedia('(max-width:710px)').matches:value==='1';
+})();
+function syncSidebarScrollLock(){
+ document.body.classList.toggle('sidebar-drawer-open',Boolean(current&&sidebarOpen&&window.matchMedia('(max-width:710px)').matches));
+}
+function toggleSidebar(){
+ sidebarOpen=!sidebarOpen;
+ localStorage.setItem(SIDEBAR_PREF_KEY,sidebarOpen?'1':'0');
+ render();
+ const selector=sidebarOpen?'.sidebar-close-trigger':'.sidebar-toggle-main';
+ document.querySelector(selector)?.focus();
+}
+window.addEventListener('resize',syncSidebarScrollLock);
 const projects=()=>current?.projects||[];
 const activeProject=()=>projects().find(p=>p.id===selectedProjectId)||projects()[0]||null;
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -53,6 +69,7 @@ function legacyData(){try{return JSON.parse(localStorage.getItem('syncsquad-stat
 function memberNameInput(){return (legacyData()?.members||[]).map(x=>x.name).filter(Boolean).join('\n')||'Minh Anh\nQuốc Bảo\nThu Hà\nGia Huy'}
 
 function welcome(message=''){
+  document.body.classList.remove('sidebar-drawer-open');
   publicRoom=null;selectedMemberId=null;
   app.innerHTML=`<main class="welcome"><section class="welcome-card">
     <div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>TEAMWORK WORKSPACE</small></div></div>
@@ -84,6 +101,7 @@ async function openRoom(id,message=''){
   }catch(err){welcome(alertText(err));}
 }
 function joinView(message=''){
+  document.body.classList.remove('sidebar-drawer-open');
   if(!publicRoom)return welcome('Không tìm thấy thông tin phòng');
   const selected=publicRoom.members.find(m=>m.id===selectedMemberId);
   app.innerHTML=`<main class="welcome"><section class="welcome-card">
@@ -169,9 +187,27 @@ function taskCard(t){const who=member(t.assignee_id);const deadline=t.deadline?S
 function tasksView(){const available=current.tasks.filter(t=>!t.assignee_id&&t.status==='todo').length;return `<div class="toolbar"><div><b>${current.tasks.length} công việc</b> <small>· ${available} task chưa nhận</small></div>${you().role==='admin'?button('🎯 Chốt đơn bằng vòng quay','roulette','rotate-cw','btn primary',available?'':'disabled'):'<span class="member-notice">Trưởng nhóm phụ trách tạo và duyệt nhiệm vụ</span>'}</div>${rouletteResult?`<div class="roulette-status">🎉 ${escapeHTML(rouletteResult)}</div>`:''}<div class="kanban">${Object.entries(STATUS).map(([s,label],i)=>`<section class="kan-col"><div class="kan-header"><i class="status-dot" style="background:${['#96a1b4','#5b8ee6','#e8ad44','#24a16c'][i]}"></i>${label}<span class="col-count">${current.tasks.filter(t=>t.status===s).length}</span></div>${current.tasks.filter(t=>t.status===s).map(taskCard).join('')||'<div class="empty">Chưa có task</div>'}</section>`).join('')}</div>`}
 function reportView(){return `<div class="report-columns"><section class="panel"><div class="panel-head"><div><h2>Tỷ lệ đóng góp</h2><p>Điểm nhiệm vụ đã được trưởng nhóm duyệt</p></div><span class="status-pill done">LIVE</span></div><div class="chart-wrap"><canvas id="donut"></canvas></div><div style="text-align:center;color:#8490a2;font-size:11px">Tổng điểm hợp lệ: <b style="font-size:17px;color:#172033">${total()}</b></div></section><section class="panel"><div class="panel-head"><div><h2>Thanh máu cống hiến</h2><p>Mức chuẩn công bằng: ${fair().toFixed(1)}% mỗi người</p></div>${icon('shield-check',19)}</div>${contributionBars()}</section></div><section class="panel"><div class="panel-head"><div><h2>Bảng tổng kết nộp giảng viên</h2><p>Xuất Markdown hoặc in trực tiếp ra PDF khổ A4</p></div><div class="actions">${button('Copy bảng Markdown','export','copy')}${button('In / Lưu PDF','print','printer')}</div></div><div class="report-table"><table><thead><tr><th>Thành viên</th><th>Task đã duyệt</th><th>Điểm</th><th>Tỷ lệ</th><th>Xếp loại</th><th>Đánh giá</th></tr></thead><tbody>${people().map(m=>{const p=percent(m.id),max=Math.max(0,...people().map(x=>score(x.id)));const badge=score(m.id)===max&&max>0?'<span class="mini-tag mvp">✦ MVP Gánh Team</span>':total()&&p<fair()/2?'<span class="mini-tag risk">⚠ Nguy cơ Free-Rider</span>':'<span style="color:#97a2b3">Đang theo dõi</span>';return `<tr><td><div class="person">${avatar(m,true)}<b>${escapeHTML(m.name)}</b></div></td><td>${current.tasks.filter(t=>t.assignee_id===m.id&&t.status==='done'&&t.verified_by).length}</td><td><b>${score(m.id)}</b></td><td>${p}%</td><td><span class="grade">${grade(p)}</span></td><td>${badge}</td></tr>`}).join('')}</tbody></table></div></section><section class="panel"><div class="panel-head"><div><h2>Đối chiếu bằng chứng</h2><p>Mọi task hoàn thành phải có link chứng minh và người duyệt</p></div></div><div class="report-table"><table><thead><tr><th>Nhiệm vụ</th><th>Người nhận</th><th>Trạng thái</th><th>Điểm</th><th>Bằng chứng</th><th>Người duyệt</th></tr></thead><tbody>${current.tasks.map(t=>`<tr><td>${escapeHTML(t.title)}</td><td>${escapeHTML(member(t.assignee_id)?.name||'Chưa nhận')}</td><td>${STATUS[t.status]}</td><td>${t.points}</td><td>${t.proof_url?`<a href="${escapeHTML(t.proof_url)}" target="_blank" rel="noopener noreferrer" style="color:#5962da">Mở link ↗</a>`:'—'}</td><td>${escapeHTML(member(t.verified_by)?.name||'—')}</td></tr>`).join('')}</tbody></table></div></section>`}
 function render(){if(!current)return welcome();const open=current.tasks.filter(t=>t.status!=='done').length;const project=activeProject();
-app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>STUDENT WORKSPACE</small></div></div>${roomProjectHub()}<div class="nav-caption">KHÔNG GIAN LÀM VIỆC</div><nav class="nav">${[['overview','layout-dashboard','Tổng quan'],['schedule','calendar-days','Ma trận lịch'],['tasks','list-checks','Nhiệm Vụ'],['report','chart-pie','Đóng góp']].map(([s,i,l])=>`<button class="${tab===s?'active':''}" data-tab="${s}">${icon(i)}${l}${s==='tasks'?`<span class="nav-count">${open}</span>`:''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="hint-box">${icon('circle-help',19)}<div><b>Làm nhóm thông minh</b><small>Lịch rảnh, phân việc & đánh giá chéo</small></div></div><button class="btn" data-action="logout" style="margin-top:12px;font-size:11px">${icon('log-out',14)} Đăng xuất</button></div></aside><section class="main"><header class="topbar"><div class="crumb">Workspace　/　<b>${ACTIVE_TABS[tab]}</b></div><div class="top-right"><span class="sync-ok">Đã kết nối Neon</span>${button('Copy link phòng','copyInvite','link')}${button('Thành viên','members','users')}${avatar(you())}</div></header><div class="content">${banner?`<div class="sos-alert">${icon('siren',19)}<div style="flex:1"><b>BÁO ĐỘNG NHÓM</b><small>${escapeHTML(banner)}</small></div><button class="link-action" data-action="dismiss">${icon('x',15)}</button></div>`:''}<div class="heading"><div><div class="eyebrow">${escapeHTML(current.room.name.toUpperCase())} · ${escapeHTML(project?.name||'Đồ án chính')}</div><h1>${tab==='overview'?'Chào '+escapeHTML(you().name.split(' ').pop())+' 👋':tab==='schedule'?'Ma trận lịch rảnh':tab==='tasks'?'Nhiệm Vụ':'Báo cáo đóng góp'}</h1><p>${tab==='overview'?'Tiến độ của '+escapeHTML(project?.name||'Đồ án chính')+' và sự đóng góp của các thành viên.':tab==='schedule'?'Lịch rảnh dùng chung cho mọi đồ án trong phòng.':tab==='tasks'?'Nhiệm vụ của '+escapeHTML(project?.name||'Đồ án chính')+' — bằng chứng rõ ràng, trưởng nhóm duyệt.':'Báo cáo điểm riêng của '+escapeHTML(project?.name||'Đồ án chính')+'.'}</p></div><div class="actions">${you().role==='admin'?button('Tạo nhiệm vụ','newtask','plus','btn primary'):''}</div></div>
+app.innerHTML=`<div class="shell ${sidebarOpen?'sidebar-open':'sidebar-collapsed'}">
+<aside class="sidebar" id="workspace-sidebar" aria-label="Thanh điều hướng SyncSquad">
+  <div class="sidebar-header">
+    <div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>STUDENT WORKSPACE</small></div></div>
+    <button type="button" class="sidebar-close-trigger" data-action="toggleSidebar" aria-label="Đóng thanh bên" title="Đóng thanh bên">${icon('panel-left-close',19)}</button>
+  </div>
+  ${roomProjectHub()}<div class="nav-caption">KHÔNG GIAN LÀM VIỆC</div><nav class="nav">${[['overview','layout-dashboard','Tổng quan'],['schedule','calendar-days','Ma trận lịch'],['tasks','list-checks','Nhiệm Vụ'],['report','chart-pie','Đóng góp']].map(([s,i,l])=>`<button class="${tab===s?'active':''}" data-tab="${s}">${icon(i)}${l}${s==='tasks'?`<span class="nav-count">${open}</span>`:''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="hint-box">${icon('circle-help',19)}<div><b>Làm nhóm thông minh</b><small>Lịch rảnh, phân việc & đánh giá chéo</small></div></div><button class="btn" data-action="logout" style="margin-top:12px;font-size:11px">${icon('log-out',14)} Đăng xuất</button></div></aside>
+<button type="button" class="sidebar-backdrop" data-action="toggleSidebar" tabindex="-1" aria-label="Đóng menu điều hướng"></button>
+<section class="main"><header class="topbar">
+  <div class="topbar-left">
+    <button type="button" class="sidebar-toggle-main" data-action="toggleSidebar"
+       aria-label="${sidebarOpen?'Đóng thanh bên':'Mở thanh bên'}"
+       aria-controls="workspace-sidebar" aria-expanded="${sidebarOpen}"
+       title="${sidebarOpen?'Đóng thanh bên':'Mở thanh bên'}">
+      ${icon(sidebarOpen?'panel-left-close':'panel-left-open',19)}
+      <span>${sidebarOpen?'Ẩn menu':'Mở menu'}</span>
+    </button>
+    <div class="crumb">Workspace　/　<b>${ACTIVE_TABS[tab]}</b></div>
+  </div><div class="top-right"><span class="sync-ok">Đã kết nối Neon</span>${button('Copy link phòng','copyInvite','link')}${button('Thành viên','members','users')}${avatar(you())}</div></header><div class="content">${banner?`<div class="sos-alert">${icon('siren',19)}<div style="flex:1"><b>BÁO ĐỘNG NHÓM</b><small>${escapeHTML(banner)}</small></div><button class="link-action" data-action="dismiss">${icon('x',15)}</button></div>`:''}<div class="heading"><div><div class="eyebrow">${escapeHTML(current.room.name.toUpperCase())} · ${escapeHTML(project?.name||'Đồ án chính')}</div><h1>${tab==='overview'?'Chào '+escapeHTML(you().name.split(' ').pop())+' 👋':tab==='schedule'?'Ma trận lịch rảnh':tab==='tasks'?'Nhiệm Vụ':'Báo cáo đóng góp'}</h1><p>${tab==='overview'?'Tiến độ của '+escapeHTML(project?.name||'Đồ án chính')+' và sự đóng góp của các thành viên.':tab==='schedule'?'Lịch rảnh dùng chung cho mọi đồ án trong phòng.':tab==='tasks'?'Nhiệm vụ của '+escapeHTML(project?.name||'Đồ án chính')+' — bằng chứng rõ ràng, trưởng nhóm duyệt.':'Báo cáo điểm riêng của '+escapeHTML(project?.name||'Đồ án chính')+'.'}</p></div><div class="actions">${you().role==='admin'?button('Tạo nhiệm vụ','newtask','plus','btn primary'):''}</div></div>
 ${tab==='overview'?overview():tab==='schedule'?schedule():tab==='tasks'?tasksView():reportView()}<div class="footer"><span>© 2026 SyncSquad · ${escapeHTML(roomId)}</span><span class="online">Đang đồng bộ dữ liệu</span></div></div></section></div><button class="fab" data-action="sos">${icon('siren',21)}<span>TRIỆU TẬP SOS</span></button>`;
-icons();if(tab==='report')drawChart();}
+syncSidebarScrollLock();icons();if(tab==='report')drawChart();}
 
 const donutPercentPlugin={
  id:'syncsquadDonutPercent',
@@ -322,6 +358,7 @@ function parseText(text){const cells=[];const portions=text.split(/(?=thứ\s*[2
 async function applyBusyPaint(){if(!drag||!drag.cells.length)return;const update=drag;drag=null;try{await api('busy_batch',{busy:update.busy,cells:update.cells});await refresh(true)}catch(err){toast(alertText(err));await refresh(true)}}
 
 async function switchProject(id,nextTab){
+ if(window.matchMedia('(max-width:710px)').matches){sidebarOpen=false;localStorage.setItem(SIDEBAR_PREF_KEY,'0');}
  if(!projects().some(p=>p.id===id))throw new Error('Đồ án không thuộc nhóm hiện tại');
  selectedProjectId=id;
  localStorage.setItem('syncsquad-project-'+roomId,id);
@@ -344,8 +381,16 @@ async function init(){
 }
 
 // Single delegated event handler keeps the SPA responsive after each render.
-document.addEventListener('click',async e=>{const el=e.target.closest('[data-action],[data-tab]');if(!el)return;const act=el.dataset.action,id=el.dataset.id;if(el.dataset.tab){tab=el.dataset.tab;render();return}try{
+document.addEventListener('click',async e=>{const el=e.target.closest('[data-action],[data-tab]');if(!el)return;const act=el.dataset.action,id=el.dataset.id;if(el.dataset.tab){
+ tab=el.dataset.tab;
+ if(sidebarOpen&&window.matchMedia('(max-width:710px)').matches){
+   sidebarOpen=false;
+   localStorage.setItem(SIDEBAR_PREF_KEY,'0');
+ }
+ render();return;
+}try{
 if(act==='close')return closeDialog();
+if(act==='toggleSidebar'){toggleSidebar();return;}
 
 if(act==='toggleRoomProjects'){roomProjectMenuOpen=!roomProjectMenuOpen;render();return}
 if(act==='joinProject'){
@@ -355,11 +400,19 @@ if(act==='joinProject'){
  finally{working=false}
  return;
 }
-if(act==='newProject')return projectDialog();
+if(act==='newProject'){
+ if(sidebarOpen&&window.matchMedia('(max-width:710px)').matches){
+   sidebarOpen=false;localStorage.setItem(SIDEBAR_PREF_KEY,'0');render();
+ }
+ return projectDialog();
+}
 if(act==='editProject'){
  if(you().role!=='admin')return toast('Chỉ trưởng nhóm mới sửa được đồ án');
  const p=projects().find(x=>x.id===id);
  if(!p)return toast('Không tìm thấy đồ án');
+ if(sidebarOpen&&window.matchMedia('(max-width:710px)').matches){
+   sidebarOpen=false;localStorage.setItem(SIDEBAR_PREF_KEY,'0');render();
+ }
  return projectDialog(p);
 }
 if(act==='saveProject'){
@@ -438,6 +491,7 @@ if(act==='goHome'){
  }
  if(act==='copyInvite'){if(!roomId)return toast('Chưa chọn phòng');await copy(shareURL(roomId));return;}
  if(act==='logout'){
+  document.body.classList.remove('sidebar-drawer-open');
   if(session){try{await api('logout')}catch(err){console.warn('Logout:',alertText(err))}}
   const all=joined();
   if(all[roomId])delete all[roomId];
@@ -511,7 +565,11 @@ document.addEventListener('change',async e=>{
  }
  if(el.dataset.status){const t=current.tasks.find(t=>t.id===el.dataset.status);if(!t)return;let proof='';if(el.value==='done'){el.value=t.status;toast('Chỉ trưởng nhóm mới có quyền xác nhận hoàn thành. Hãy chuyển sang Chờ duyệt và nộp link bằng chứng');return}if(el.value==='review'){proof=t.proof_url||prompt('Nhập link HTTPS Google Drive, GitHub hoặc Figma làm bằng chứng:')||'';if(!proof){el.value=t.status;return}}try{working=true;await api('task_status',{id:t.id,status:el.value,proof});await refresh(true);toast('Đã cập nhật trạng thái')}catch(err){el.value=t.status;toast(alertText(err))}finally{working=false}}});
 dialog.addEventListener('click',e=>{if(e.target===dialog)closeDialog()});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!dialog.hidden)closeDialog()});
+document.addEventListener('keydown',e=>{
+ if(e.key!=='Escape')return;
+ if(!dialog.hidden){closeDialog();return;}
+ if(sidebarOpen&&window.matchMedia('(max-width:710px)').matches)toggleSidebar();
+});
 // Pointer capture / hover enables painting many consecutive cells before one database batch request.
 document.addEventListener('pointerdown',e=>{const td=e.target.closest('[data-cell]');if(!td||tab!=='schedule'||!current)return;const [day,slot]=td.dataset.cell.split('-').map(Number);if(!editingBusy){meetingDialog(day,slot);return}e.preventDefault();const has=current.busy.some(x=>x.member_id===you().id&&x.day===day&&x.slot===slot);drag={busy:!has,cells:[{day,slot}],keys:new Set([td.dataset.cell])};td.classList.add('pending')});
 document.addEventListener('pointerover',e=>{if(!drag||!editingBusy)return;const td=e.target.closest('[data-cell]');if(!td||drag.keys.has(td.dataset.cell))return;const [day,slot]=td.dataset.cell.split('-').map(Number);drag.keys.add(td.dataset.cell);drag.cells.push({day,slot});td.classList.add('pending')});
