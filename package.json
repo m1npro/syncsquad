@@ -1,0 +1,17 @@
+{
+  "name": "syncsquad",
+  "version": "2.0.0",
+  "private": true,
+  "description": "SyncSquad collaborative student workspace",
+  "scripts": {
+    "start": "vercel dev",
+    "check": "node --check api/room.js && node --check public/app.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module"
+}
