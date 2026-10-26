@@ -5,8 +5,8 @@ const STATUS={todo:'Cần làm',progress:'Đang làm',review:'Chờ duyệt',don
 const COLORS=['#6268e8','#0e9fcb','#19a576','#ed9d36','#a36be8','#e46b92','#64748b','#0d9488'];
 const ACTIVE_TABS={overview:'Tổng quan',schedule:'Lịch rảnh',tasks:'Nhiệm Vụ',report:'Đóng góp'};
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog');
-const FIXED_ROOM='SS-220314000001';
-let current=null,roomId=FIXED_ROOM,session=null,tab='overview',editingBusy=false,drag=null,banner='',chart=null,pollTimer=null,rouletteResult='',lastInvites=null,working=false;
+let current=null,roomId=null,session=null,tab='overview',editingBusy=false,drag=null,banner='',chart=null,pollTimer=null,rouletteResult='',working=false;
+let publicRoom=null,selectedMemberId=null;
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon=(name,size=17)=>`<i data-lucide="${name}" width="${size}" height="${size}"></i>`;
 const people=()=>current?.members||[];
@@ -20,9 +20,9 @@ const percent=id=>total()?Math.round(100*score(id)/total()):0;
 const fair=()=>people().length?100/people().length:0;
 const grade=p=>p>=90?'A+':p>=75?'A':p>=55?'B':p>=35?'C':'D';
 const joined=()=>JSON.parse(localStorage.getItem('syncsquad-accounts')||'{}');
-function storeSession(id,memberId,token) {const all=joined();if(!all[id])all[id]={};all[id][memberId]=token;localStorage.setItem('syncsquad-accounts',JSON.stringify(all));localStorage.setItem('syncsquad-selected-'+id,memberId);roomId=id;session={memberId,token};}
+function storeSession(id,memberId,token){const all=joined();all[id]={[memberId]:token};localStorage.setItem('syncsquad-accounts',JSON.stringify(all));localStorage.setItem('syncsquad-selected-'+id,memberId);localStorage.setItem('syncsquad-last-room',id);roomId=id;session={memberId,token};history.replaceState(null,'','/?room='+encodeURIComponent(id));}
 function selectedSession(id){const accounts=joined()[id]||{};const preferred=localStorage.getItem('syncsquad-selected-'+id);const key=accounts[preferred]?preferred:Object.keys(accounts)[0];return key?{memberId:key,token:accounts[key]}:null;}
-function shareURL(id,token){return location.origin+'/?room='+encodeURIComponent(id)+'#join='+encodeURIComponent(token);}
+function shareURL(id){return location.origin+'/?room='+encodeURIComponent(id);}
 function toast(message){const box=document.createElement('div');box.className='message';box.textContent=message;document.getElementById('toast').appendChild(box);setTimeout(()=>box.remove(),4300)}
 function closeDialog(){dialog.hidden=true;dialog.innerHTML='';if(current)render();}
 function modal(html){dialog.innerHTML=`<div class="dialog" role="dialog" aria-modal="true">${html}</div>`;dialog.hidden=false;icons();}
@@ -36,12 +36,69 @@ async function api(action,payload={}){
  if(!response.ok)throw new Error(data.error||'Yêu cầu thất bại');return data;
 }
 async function getState(){if(!session||!roomId)return;const response=await fetch('/api/room?room='+encodeURIComponent(roomId),{headers:{'Authorization':'Bearer '+session.token},cache:'no-store'});const data=await response.json().catch(()=>({error:'Không tải được dữ liệu'}));if(!response.ok)throw new Error(data.error||'Không thể kết nối phòng');current=data;return data;}
-async function refresh(silent=false){try{await getState();if(dialog.hidden)render();}catch(err){if(!silent){current=null;welcome(alertText(err));}else console.warn('Không thể đồng bộ:',alertText(err));}}
+async function refresh(silent=false){try{await getState();if(dialog.hidden)render();}catch(err){if(!silent){current=null;session=null;await openRoom(roomId,alertText(err));}else console.warn('Không thể đồng bộ:',alertText(err));}}
 function legacyData(){try{return JSON.parse(localStorage.getItem('syncsquad-state')||'null')}catch{return null}}
 function memberNameInput(){return (legacyData()?.members||[]).map(x=>x.name).filter(Boolean).join('\n')||'Minh Anh\nQuốc Bảo\nThu Hà\nGia Huy'}
+
 function welcome(message=''){
- app.innerHTML=`<main class="welcome"><section class="welcome-card"><div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>TEAMWORK WORKSPACE</small></div></div><div class="eyebrow">PHÒNG HỌC NHÓM CỐ ĐỊNH</div><h1>Đăng nhập bằng MSSV 👋</h1><p>Hệ thống chỉ có một phòng. Nhập MSSV đã được host cho phép để xem lịch, nhiệm vụ và đóng góp của nhóm.</p>${message?`<div class="alert">${icon('alert-circle',16)} ${escapeHTML(message)}</div>`:''}<div class="room-hint"><b>Nhóm đồ án 04</b><br>Môn: Phát triển ứng dụng Web<br>Host: DE220314</div><label for="mssvLogin">Mã số sinh viên (MSSV)</label><input class="field" id="mssvLogin" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="VD: DE220314" style="text-transform:uppercase"/><div class="actions" style="margin-top:18px">${button('Vào phòng','login','log-in','btn primary')}</div><p style="font-size:11px;margin-top:16px;color:#8791a3">MSSV ngoài danh sách không thể tham gia. MSSV không phải mật khẩu bí mật; cần xác thực bổ sung để tránh giả mạo danh tính.</p></section></main>`;
- icons();document.getElementById('mssvLogin')?.focus();}
+  publicRoom=null;selectedMemberId=null;
+  app.innerHTML=`<main class="welcome"><section class="welcome-card">
+    <div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>TEAMWORK WORKSPACE</small></div></div>
+    <div class="eyebrow">KHỞI TẠO PHÒNG NHÓM</div><h1>Bắt đầu một dự án thật hiệu quả 👋</h1>
+    <p>Tạo nhóm một lần, sau đó chia sẻ <b>một link chung</b> để mỗi thành viên tự chọn tên và đặt PIN riêng.</p>
+    ${message?`<div class="alert">${icon('alert-circle',16)} ${escapeHTML(message)}</div>`:''}
+    <label for="newGroup">Tên nhóm *</label><input id="newGroup" class="field" maxlength="100" placeholder="Ví dụ: Nhóm đồ án 04">
+    <label for="newSubject">Môn học *</label><input id="newSubject" class="field" maxlength="100" placeholder="Ví dụ: Phát triển ứng dụng Web">
+    <label for="newMembers">Thành viên (3–8 người, mỗi dòng một tên) *</label>
+    <textarea id="newMembers" class="field parser" style="min-height:115px" placeholder="Bạn (trưởng nhóm)&#10;Quốc Bảo&#10;Thu Hà&#10;Gia Huy"></textarea>
+    <div class="room-hint">Người đầu tiên trong danh sách là <b>trưởng nhóm</b>. Bạn đặt PIN 4 số để bảo vệ danh tính này; các thành viên còn lại chọn tên và đặt PIN khi tham gia.</div>
+    <label for="hostPin">PIN của trưởng nhóm (4 số) *</label>
+    <input type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" class="field" id="hostPin" placeholder="••••">
+    <div class="actions" style="margin-top:18px">${button('Tạo phòng trên Neon','createRoom','plus','btn primary')}</div>
+    <div class="join-divider">HOẶC THAM GIA PHÒNG ĐÃ CÓ</div>
+    <label for="joinRoomId">Mã phòng từ link mời</label>
+    <div class="join-row"><input class="field" id="joinRoomId" placeholder="SS-XXXXXXXXXXXX" maxlength="15" autocapitalize="characters"><button class="btn" data-action="openRoomById">Vào phòng</button></div>
+  </section></main>`;
+  icons();
+}
+async function openRoom(id,message=''){
+  if(!/^SS-[A-F0-9]{12}$/.test(id||''))return welcome('Room ID không hợp lệ. Hãy kiểm tra link mời.');
+  roomId=id;session=null;current=null;selectedMemberId=null;
+  try{
+    const response=await fetch('/api/room?room='+encodeURIComponent(id)+'&public=1',{cache:'no-store'});
+    const data=await response.json().catch(()=>({error:'Không đọc được danh sách phòng'}));
+    if(!response.ok)throw new Error(data.error||'Không thể tải phòng');
+    publicRoom=data;joinView(message);
+  }catch(err){welcome(alertText(err));}
+}
+function joinView(message=''){
+  if(!publicRoom)return welcome('Không tìm thấy thông tin phòng');
+  const selected=publicRoom.members.find(m=>m.id===selectedMemberId);
+  app.innerHTML=`<main class="welcome"><section class="welcome-card">
+    <div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>TEAMWORK WORKSPACE</small></div></div>
+    <div class="eyebrow">LINK MỜI PHÒNG NHÓM</div><h1>Chọn tên của bạn 👋</h1>
+    <p>Mỗi người chọn đúng tên của mình. Tên đã tham gia sẽ được khóa và yêu cầu PIN nếu đăng nhập từ thiết bị khác.</p>
+    <div class="room-hint"><b>${escapeHTML(publicRoom.room.name)}</b><br>Môn: ${escapeHTML(publicRoom.room.subject)}<br><small>Room ID: ${escapeHTML(publicRoom.room.id)}</small></div>
+    ${message?`<div class="alert">${icon('alert-circle',16)} ${escapeHTML(message)}</div>`:''}
+    <div class="identity-list">${publicRoom.members.map(m=>`<button class="identity-card ${m.id===selectedMemberId?'selected':''}" data-action="chooseMember" data-id="${escapeHTML(m.id)}">
+      ${avatar(m)}<span class="identity-info"><b>Tôi là ${escapeHTML(m.name)}</b><small>${m.role==='admin'?'Trưởng nhóm':'Thành viên'}</small></span>
+      <span class="claim-status ${m.claimed?'claimed':''}">${m.claimed?'Đã tham gia':'Chưa tham gia'}</span>
+    </button>`).join('')}</div>
+    ${selected?`<div class="identity-panel">
+      <b>${escapeHTML(selected.name)}</b>
+      <p>${selected.claimed?'Tên này đã được nhận. Chỉ người có mã PIN mới đăng nhập lại được.':'Đặt một mã PIN 4 số để nhận tên này. Người khác không thể nhận lại tên đã đăng ký.'}</p>
+      <label for="joinPin">${selected.claimed?'PIN đã đặt':'Đặt PIN 4 số'}</label>
+      <input id="joinPin" type="password" class="field" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" autocomplete="off" placeholder="••••">
+      ${selected.claimed?'':`<label for="joinPinConfirm">Nhập lại PIN</label><input id="joinPinConfirm" type="password" class="field" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" autocomplete="off" placeholder="••••">`}
+      <div class="actions" style="margin-top:15px">${button(selected.claimed?'Đăng nhập bằng PIN':'Xác nhận nhận tên','enterRoom','log-in','btn primary')}</div>
+    </div>`:''}
+    <div class="dialog-actions" style="justify-content:space-between;margin-top:18px">
+      ${button('Tạo phòng khác','goHome','plus')}
+      ${button('Sao chép link chung','copyInvite','link')}
+    </div>
+  </section></main>`;
+  icons();if(selected)document.getElementById('joinPin')?.focus();
+}
 function stat(label,note,value,iconName,fg,bg){return `<div class="stat"><div class="stat-label">${label}<span class="stat-icon" style="background:${bg};color:${fg}">${icon(iconName,17)}</span></div><div class="value">${value}</div><small>${note}</small></div>`}
 function contributionBars(){return people().map(m=>{const p=percent(m.id),best=Math.max(0,...people().map(x=>score(x.id)));const badge=score(m.id)===best&&best>0?'<span class="mini-tag mvp">✦ MVP Gánh Team</span>':total()>0&&p<fair()/2?'<span class="mini-tag risk">⚠ Nguy cơ Free-Rider</span>':'';return `<div><div class="contribution"><div class="contrib-name">${avatar(m,true)}<span>${escapeHTML(m.name)}</span></div><div><div class="track"><span style="background:${m.color};width:${p}%"></span></div><div class="contrib-note">${score(m.id)} điểm · chuẩn ${fair().toFixed(1)}%</div></div><b class="contrib-pct">${p}%</b></div>${badge}</div>`}).join('')}
 function recentTasks(){return current.tasks.slice(0,5).map(t=>`<div class="recent-task"><span class="check-icon ${t.status==='done'?'done':''}">${icon(t.status==='done'?'check':'circle',13)}</span><div class="recent-task-main"><h3>${escapeHTML(t.title)}</h3><small>${escapeHTML(member(t.assignee_id)?.name||'Chưa phân công')} · ${t.points} điểm</small></div><span class="status-pill ${t.status}">${STATUS[t.status]}</span></div>`).join('')||'<div class="empty">Chưa có công việc</div>'}
