@@ -3,10 +3,12 @@ const DAYS=['Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7','Chủ N
 const SLOTS=[['Ca 1','07:00','09:15'],['Ca 2','09:30','11:45'],['Ca 3','12:30','14:45'],['Ca 4','15:00','17:15'],['Ca 5','17:30','19:45'],['Ca 6','19:45','21:30']];
 const STATUS={todo:'Cần làm',progress:'Đang làm',review:'Chờ duyệt',done:'Hoàn thành'};
 const COLORS=['#6268e8','#0e9fcb','#19a576','#ed9d36','#a36be8','#e46b92','#64748b','#0d9488'];
-const ACTIVE_TABS={overview:'Tổng quan',schedule:'Lịch rảnh',tasks:'Nhiệm Vụ',report:'Đóng góp'};
+const ACTIVE_TABS={overview:'Tổng quan',projects:'Đồ án',schedule:'Lịch rảnh',tasks:'Nhiệm Vụ',report:'Đóng góp'};
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog');
 let current=null,roomId=null,session=null,tab='overview',editingBusy=false,drag=null,banner='',chart=null,pollTimer=null,rouletteResult='',working=false;
-let publicRoom=null,selectedMemberId=null;
+let publicRoom=null,selectedMemberId=null,selectedProjectId=null;
+const projects=()=>current?.projects||[];
+const activeProject=()=>projects().find(p=>p.id===selectedProjectId)||projects()[0]||null;
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon=(name,size=17)=>`<i data-lucide="${name}" width="${size}" height="${size}"></i>`;
 const people=()=>current?.members||[];
@@ -20,7 +22,7 @@ const percent=id=>total()?Math.round(100*score(id)/total()):0;
 const fair=()=>people().length?100/people().length:0;
 const grade=p=>p>=90?'A+':p>=75?'A':p>=55?'B':p>=35?'C':'D';
 const joined=()=>JSON.parse(localStorage.getItem('syncsquad-accounts')||'{}');
-function storeSession(id,memberId,token){const all=joined();all[id]={[memberId]:token};localStorage.setItem('syncsquad-accounts',JSON.stringify(all));localStorage.setItem('syncsquad-selected-'+id,memberId);localStorage.setItem('syncsquad-last-room',id);roomId=id;session={memberId,token};history.replaceState(null,'','/?room='+encodeURIComponent(id));}
+function storeSession(id,memberId,token){selectedProjectId=null;const all=joined();all[id]={[memberId]:token};localStorage.setItem('syncsquad-accounts',JSON.stringify(all));localStorage.setItem('syncsquad-selected-'+id,memberId);localStorage.setItem('syncsquad-last-room',id);roomId=id;session={memberId,token};history.replaceState(null,'','/?room='+encodeURIComponent(id));}
 function selectedSession(id){const accounts=joined()[id]||{};const preferred=localStorage.getItem('syncsquad-selected-'+id);const key=accounts[preferred]?preferred:Object.keys(accounts)[0];return key?{memberId:key,token:accounts[key]}:null;}
 function shareURL(id){return location.origin+'/?room='+encodeURIComponent(id);}
 function toast(message){const box=document.createElement('div');box.className='message';box.textContent=message;document.getElementById('toast').appendChild(box);setTimeout(()=>box.remove(),4300)}
@@ -31,11 +33,21 @@ function button(text,action,iconName='',cls='btn',extra=''){return `<button clas
 async function copy(text){try{await navigator.clipboard.writeText(text);toast('Đã copy vào Clipboard');}catch{window.prompt('Sao chép nội dung bên dưới:',text);}}
 function alertText(err){return err instanceof Error?err.message:String(err)}
 async function api(action,payload={}){
- const response=await fetch('/api/room',{method:'POST',headers:{'Content-Type':'application/json',...(session?{'Authorization':'Bearer '+session.token}:{})},body:JSON.stringify({action,roomId,...payload}),cache:'no-store'});
+ const response=await fetch('/api/room',{method:'POST',headers:{'Content-Type':'application/json',...(session?{'Authorization':'Bearer '+session.token}:{})},body:JSON.stringify({action,roomId,...(selectedProjectId?{projectId:selectedProjectId}:{}),...payload}),cache:'no-store'});
  const data=await response.json().catch(()=>({error:'Máy chủ không trả về JSON'}));
  if(!response.ok)throw new Error(data.error||'Yêu cầu thất bại');return data;
 }
-async function getState(){if(!session||!roomId)return;const response=await fetch('/api/room?room='+encodeURIComponent(roomId),{headers:{'Authorization':'Bearer '+session.token},cache:'no-store'});const data=await response.json().catch(()=>({error:'Không tải được dữ liệu'}));if(!response.ok)throw new Error(data.error||'Không thể kết nối phòng');current=data;return data;}
+async function getState(){
+ if(!session||!roomId)return;
+ const preferred=selectedProjectId||localStorage.getItem('syncsquad-project-'+roomId);
+ const url='/api/room?room='+encodeURIComponent(roomId)+(preferred?'&project='+encodeURIComponent(preferred):'');
+ const response=await fetch(url,{headers:{'Authorization':'Bearer '+session.token},cache:'no-store'});
+ const data=await response.json().catch(()=>({error:'Không tải được dữ liệu'}));
+ if(!response.ok)throw new Error(data.error||'Không thể kết nối phòng');
+ current=data;selectedProjectId=data.activeProjectId;
+ if(selectedProjectId)localStorage.setItem('syncsquad-project-'+roomId,selectedProjectId);
+ return data;
+}
 async function refresh(silent=false){try{await getState();if(dialog.hidden)render();}catch(err){if(!silent){current=null;session=null;await openRoom(roomId,alertText(err));}else console.warn('Không thể đồng bộ:',alertText(err));}}
 function legacyData(){try{return JSON.parse(localStorage.getItem('syncsquad-state')||'null')}catch{return null}}
 function memberNameInput(){return (legacyData()?.members||[]).map(x=>x.name).filter(Boolean).join('\n')||'Minh Anh\nQuốc Bảo\nThu Hà\nGia Huy'}
@@ -104,6 +116,45 @@ function contributionBars(){return people().map(m=>{const p=percent(m.id),best=M
 function recentTasks(){return current.tasks.slice(0,5).map(t=>`<div class="recent-task"><span class="check-icon ${t.status==='done'?'done':''}">${icon(t.status==='done'?'check':'circle',13)}</span><div class="recent-task-main"><h3>${escapeHTML(t.title)}</h3><small>${escapeHTML(member(t.assignee_id)?.name||'Chưa phân công')} · ${t.points} điểm</small></div><span class="status-pill ${t.status}">${STATUS[t.status]}</span></div>`).join('')||'<div class="empty">Chưa có công việc</div>'}
 function busyFor(day,slot){return current.members.filter(m=>current.busy.some(b=>b.member_id===m.id&&b.day===day&&b.slot===slot));}
 function bestSlots(){const rows=[];for(let d=0;d<7;d++)for(let s=0;s<6;s++)rows.push({d,s,n:people().length-busyFor(d,s).length});return rows.sort((a,b)=>b.n-a.n||a.d-b.d||a.s-b.s)}
+
+function projectsView(){
+ const list=projects();
+ return `<section class="panel project-intro">
+   <div class="panel-head"><div><h2>Tất cả đồ án trong ${escapeHTML(current.room.name)}</h2>
+     <p>Mỗi đồ án có bảng Nhiệm Vụ, điểm đóng góp và báo cáo riêng. Lịch rảnh và danh sách thành viên được dùng chung.</p></div>
+     ${you().role==='admin'?button('Thêm đồ án','newProject','plus','btn primary'):''}
+   </div>
+   <div class="project-cards">${list.map(p=>`<article class="project-card ${p.id===selectedProjectId?'selected':''}">
+      <div class="project-card-head"><span class="project-card-icon">${icon('folder-kanban',22)}</span>
+        <span class="status-pill ${p.id===selectedProjectId?'done':'todo'}">${p.id===selectedProjectId?'Đang mở':p.is_default?'Đồ án chính':'Đồ án'}</span>
+      </div>
+      <h3>${escapeHTML(p.name)}</h3>
+      <p>${escapeHTML(p.description||'Chưa có mô tả đồ án.')}</p>
+      <div class="project-card-stats"><span>${icon('list-checks',15)} ${p.task_count} nhiệm vụ</span>
+        <span>${icon('check-circle',15)} ${p.done_count} hoàn thành</span></div>
+      <div class="project-card-actions">
+        <button class="btn ${p.id===selectedProjectId?'':'primary'}" data-action="openProject" data-id="${escapeHTML(p.id)}">${icon('arrow-right',15)} ${p.id===selectedProjectId?'Xem Nhiệm Vụ':'Mở đồ án'}</button>
+        ${you().role==='admin'?`<button class="btn" data-action="editProject" data-id="${escapeHTML(p.id)}" title="Sửa tên và mô tả">${icon('pencil',15)}</button>`:''}
+      </div>
+   </article>`).join('')}</div>
+ </section>
+ <section class="panel project-explainer"><div class="project-help-icon">${icon('users-round',20)}</div>
+ <div><h2>Một phòng nhóm, nhiều đồ án</h2><p>Vẫn dùng một đường link mời chung và cùng các thành viên. Trưởng nhóm quản lý đồ án; mọi người làm nhiệm vụ trong đồ án được chọn và tính điểm công bằng theo từng đồ án.</p></div>
+ </section>`;
+}
+function projectDialog(p){
+ if(you()?.role!=='admin')return toast('Chỉ trưởng nhóm được quản lý đồ án');
+ const editing=Boolean(p?.id);
+ modal(`${modalHead(editing?'Chỉnh sửa đồ án':'Tạo đồ án mới',editing?'Thay đổi tên và mô tả; nhiệm vụ không bị mất.':'Đồ án mới sẽ xuất hiện cho mọi thành viên của phòng.')}
+   <label for="projectName">Tên đồ án *</label><input class="field" id="projectName" maxlength="100"
+      placeholder="Ví dụ: Website bán hàng, Đồ án môn CSDL..." value="${escapeHTML(p?.name||'')}">
+   <label for="projectDescription">Mô tả đồ án</label>
+   <textarea class="field parser" id="projectDescription" maxlength="600"
+     placeholder="Mục tiêu, yêu cầu và phạm vi đồ án...">${escapeHTML(p?.description||'')}</textarea>
+   <div class="room-hint">Mỗi đồ án có Kanban Nhiệm Vụ và báo cáo đóng góp riêng. Lịch học và link mời nhóm không đổi.</div>
+   <div class="dialog-actions">${button('Hủy','close')}
+     ${button(editing?'Lưu thay đổi':'Tạo đồ án','saveProject','check','btn primary',editing?`data-id="${escapeHTML(p.id)}"`:'')}</div>`);
+}
 function overview(){const done=current.tasks.filter(t=>t.status==='done').length;const open=current.tasks.length-done;
 return `<div class="stats">${stat('Tổng công việc',open+' công việc đang mở',current.tasks.length,'list-checks','#5962e8','#eef0ff')}${stat('Đã hoàn thành',current.tasks.length?Math.round(100*done/current.tasks.length)+'% tổng tiến độ':'Chưa có task',done,'check-circle','#158457','#e3f8ed')}${stat('Điểm đã xác minh','Điểm hợp lệ đã cộng',total(),'shield-check','#8c62df','#f0eafe')}${stat('Thành viên','Cùng phòng trên Neon',people().length,'users','#d4932f','#fff1db')}</div><div class="section-grid"><section class="panel"><div class="panel-head"><div><h2>Công việc gần đây</h2><p>Những việc đang được nhóm thực hiện</p></div><button class="link-action" data-tab="tasks">Xem Nhiệm Vụ →</button></div>${recentTasks()}</section><section class="panel"><div class="panel-head"><div><h2>Giờ vàng trong tuần</h2><p>Gợi ý ca học có nhiều người rảnh nhất</p></div>${icon('calendar-check',19)}</div>${bestSlots().slice(0,5).map(o=>`<div class="weekday"><b>${DAYS[o.d]}</b><div><span class="green-chip">${SLOTS[o.s][0]} · ${SLOTS[o.s][1]}</span><small style="color:#96a1b2">${o.n}/${people().length} người rảnh</small></div></div>`).join('')}</section></div><section class="panel"><div class="panel-head"><div><h2>Thanh máu cống hiến</h2><p>Chỉ tính điểm task đã được người khác xác minh</p></div><button class="link-action" data-tab="report">Xem báo cáo →</button></div>${contributionBars()}</section>`}
 function cellHTML(d,s){const busy=busyFor(d,s),mine=busy.some(m=>m.id===you().id),cl=busy.length===0?'gold':busy.length===1?'yellow':'blocked';return `<td class="${cl}${mine?' mine':''}" data-cell="${d}-${s}" title="${escapeHTML(busy.length?'Người bận: '+busy.map(m=>m.name).join(', '):'Giờ vàng: cả nhóm đều rảnh')}">${busy.length===0?icon('check-circle',16):icon('users',15)}<small>${busy.length===0?'GIỜ VÀNG':busy.length===1?'Vướng 1 người':busy.length+' người bận'}</small></td>`}
@@ -137,7 +188,7 @@ modal(`${modalHead('Chốt lịch họp 🎉',`${DAYS[day]} · ${SLOTS[slot][0]}
 function drawWheel(angle=0){const canvas=document.querySelector('#wheelCanvas');if(!canvas)return;const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,r=135,c=w/2,n=people().length,arc=2*Math.PI/n;ctx.clearRect(0,0,w,h);people().forEach((m,i)=>{const a=-Math.PI/2+i*arc+angle,b=a+arc;ctx.beginPath();ctx.moveTo(c,c);ctx.arc(c,c,r,a,b);ctx.closePath();ctx.fillStyle=m.color;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.stroke();ctx.save();ctx.translate(c,c);ctx.rotate(a+arc/2);ctx.textAlign='right';ctx.font='bold 12px Inter,Arial';ctx.fillStyle='#fff';ctx.fillText(m.name.length>15?m.name.slice(0,14)+'…':m.name,r-13,4);ctx.restore()});ctx.beginPath();ctx.arc(c,c,18,0,Math.PI*2);ctx.fillStyle='white';ctx.fill();ctx.fillStyle='#5c64e4';ctx.font='bold 13px Inter';ctx.textAlign='center';ctx.fillText('S',c,c+4)}
 function rouletteDialog(){modal(`${modalHead('🎯 Vòng quay Chốt đơn','Quay ngẫu nhiên thành viên để nhận một task chưa ai nhận.')}<div class="pointer-arrow">▼</div><canvas class="roulette-canvas" id="wheelCanvas" width="320" height="320"></canvas><div id="wheelResult" style="text-align:center;font-size:12px;color:#69778b;min-height:37px">Đã sẵn sàng quay!</div><div class="dialog-actions">${button('Đóng','close')}${button('Quay ngay','spin','rotate-cw','btn primary')}</div>`);drawWheel()}
 async function animateWheel(winner){const index=people().findIndex(m=>m.id===winner);if(index<0)return;const n=people().length,arc=2*Math.PI/n,totalDuration=2900,extra=6*Math.PI*2;const final=extra-(index+.5)*arc;await new Promise(resolve=>{const start=performance.now();function tick(time){const u=Math.min(1,(time-start)/totalDuration),e=1-Math.pow(1-u,4);drawWheel(final*e);if(u<1)requestAnimationFrame(tick);else resolve()}requestAnimationFrame(tick)})}
-async function exportMarkdown(){const lines=[`# BÁO CÁO ĐÓNG GÓP — ${current.room.name}`,`Môn học: ${current.room.subject}`,`Room ID: ${roomId}`,`Ngày xuất: ${new Date().toLocaleDateString('vi-VN')}`,'','| Thành viên | Task xác minh | Điểm | Tỷ lệ | Xếp loại |','|---|---:|---:|---:|---|',...people().map(m=>`| ${m.name} | ${current.tasks.filter(t=>t.assignee_id===m.id&&t.status==='done'&&t.verified_by).length} | ${score(m.id)} | ${percent(m.id)}% | ${grade(percent(m.id))} |`),'','## Danh sách công việc','| Công việc | Người phụ trách | Trạng thái | Điểm | Bằng chứng | Người duyệt |','|---|---|---|---:|---|---|',...current.tasks.map(t=>`| ${t.title} | ${member(t.assignee_id)?.name||'Chưa nhận'} | ${STATUS[t.status]} | ${t.points} | ${t.proof_url||'—'} | ${member(t.verified_by)?.name||'—'} |`)];await copy(lines.join('\n'))}
+async function exportMarkdown(){const lines=[`# BÁO CÁO ĐÓNG GÓP — ${current.room.name} / ${activeProject()?.name||'Đồ án chính'}`,`Môn học: ${current.room.subject}`,`Room ID: ${roomId}`,`Ngày xuất: ${new Date().toLocaleDateString('vi-VN')}`,'','| Thành viên | Task xác minh | Điểm | Tỷ lệ | Xếp loại |','|---|---:|---:|---:|---|',...people().map(m=>`| ${m.name} | ${current.tasks.filter(t=>t.assignee_id===m.id&&t.status==='done'&&t.verified_by).length} | ${score(m.id)} | ${percent(m.id)}% | ${grade(percent(m.id))} |`),'','## Danh sách công việc','| Công việc | Người phụ trách | Trạng thái | Điểm | Bằng chứng | Người duyệt |','|---|---|---|---:|---|---|',...current.tasks.map(t=>`| ${t.title} | ${member(t.assignee_id)?.name||'Chưa nhận'} | ${STATUS[t.status]} | ${t.points} | ${t.proof_url||'—'} | ${member(t.verified_by)?.name||'—'} |`)];await copy(lines.join('\n'))}
 function parseText(text){const cells=[];const portions=text.split(/(?=thứ\s*[2-7]|chủ\s*nhật|\bcn\b)/i);for(const p of portions){const dayMatch=p.match(/thứ\s*([2-7])/i);const d=dayMatch?Number(dayMatch[1])-2:(/chủ\s*nhật|\bcn\b/i.test(p)?6:-1);if(d<0)continue;for(const m of p.matchAll(/(?:slot|ca)\s*([1-6])|tiết\s*(\d{1,2})/gi)){const s=m[1]?Number(m[1])-1:Math.floor((Number(m[2])-1)/2);if(s>=0&&s<6)cells.push({day:d,slot:s})}}return [...new Map(cells.map(c=>[c.day+'-'+c.slot,c])).values()]}
 async function applyBusyPaint(){if(!drag||!drag.cells.length)return;const update=drag;drag=null;try{await api('busy_batch',{busy:update.busy,cells:update.cells});await refresh(true)}catch(err){toast(alertText(err));await refresh(true)}}
 async function init(){
