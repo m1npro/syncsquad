@@ -1,75 +1,143 @@
 import { neon } from '@neondatabase/serverless';
-import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, createHash, timingSafeEqual, scryptSync } from 'node:crypto';
 
-const MAX_BODY = 30000;
-const colors = ['#6268e8','#0e9fcb','#19a576','#ed9d36','#a36be8','#e46b92','#64748b','#0d9488'];
-const roomPattern = /^SS-[A-F0-9]{12}$/;
-const FIXED_ROOM='SS-220314000001';
-const ALLOWED_MSSV=new Set(['DE220314','DE220280','DE220297']);
-const statuses = ['todo','progress','review','done'];
-const difficultyPoints = { easy:10, medium:25, hard:50 };
-const safeStr = (s, max=200) => String(s ?? '').trim().slice(0,max);
-const hash = (s) => createHash('sha256').update(s).digest('hex');
-const fail = (res, code, message) => res.status(code).json({error:message});
-const validId = (id) => typeof id === 'string' && /^[a-zA-Z0-9-]{8,90}$/.test(id);
-const memberToken = () => randomBytes(32).toString('base64url');
-function proofOK(value) {
-  if (typeof value !== 'string' || value.length > 1800) return false;
-  try {
-    const u = new URL(value);
-    if (u.protocol !== 'https:') return false;
-    return ['github.com','www.github.com','drive.google.com','docs.google.com','figma.com','www.figma.com'].includes(u.hostname.toLowerCase());
-  } catch { return false; }
+const MAX_BODY=30000;
+const roomPattern=/^SS-[A-F0-9]{12}$/;
+const colors=['#6268e8','#0e9fcb','#19a576','#ed9d36','#a36be8','#e46b92','#64748b','#0d9488'];
+const statuses=['todo','progress','review','done'];
+const difficultyPoints={easy:10,medium:25,hard:50};
+const safeStr=(s,max=200)=>String(s??'').trim().slice(0,max);
+const hash=s=>createHash('sha256').update(s).digest('hex');
+const memberToken=()=>randomBytes(32).toString('base64url');
+const pinDigest=(pin,salt)=>scryptSync(pin,salt,32).toString('hex');
+const fail=(res,code,message)=>res.status(code).json({error:message});
+const validId=id=>typeof id==='string'&&/^[a-zA-Z0-9-]{8,90}$/.test(id);
+function proofOK(value){
+ if(typeof value!=='string'||value.length>1800)return false;
+ try{const u=new URL(value);return u.protocol==='https:'&&['github.com','www.github.com','drive.google.com','docs.google.com','figma.com','www.figma.com'].includes(u.hostname.toLowerCase())}catch{return false}
 }
-function checkOrigin(req) {
-  const origin = req.headers.origin;
-  if (!origin) return true;
-  try { return new URL(origin).host === (req.headers['x-forwarded-host'] || req.headers.host); }
-  catch { return false; }
+function checkOrigin(req){
+ const origin=req.headers.origin;
+ if(!origin)return true;
+ try{return new URL(origin).host===(req.headers['x-forwarded-host']||req.headers.host)}catch{return false}
 }
-function errorResponse(res, err) {
-  console.error('SyncSquad database/API error',err?.code || err?.name || 'unknown');
-  return fail(res,500,'Có lỗi máy chủ. Hãy thử lại sau.');
+function errorResponse(res,err){
+ console.error('SyncSquad database/API error',err?.code||err?.name||'unknown');
+ return fail(res,500,'Có lỗi máy chủ. Hãy thử lại sau.');
 }
-export default async function handler(req,res) {
-  if (!process.env.DATABASE_URL) return fail(res,503,'Database chưa được cấu hình trên Vercel');
-  if (!['GET','POST'].includes(req.method)) return fail(res,405,'Method không được hỗ trợ');
-  if (req.method==='POST' && !checkOrigin(req)) return fail(res,403,'Origin không hợp lệ');
-  const sql=neon(process.env.DATABASE_URL);
-  try {
-    if (req.method==='POST' && req.headers['content-length'] && Number(req.headers['content-length'])>MAX_BODY) return fail(res,413,'Dữ liệu quá lớn');
-    const body = req.method==='POST' ? (req.body || {}) : {};
-    if (typeof body !== 'object' || Array.isArray(body)) return fail(res,400,'Dữ liệu không hợp lệ');
-    const action = safeStr(body.action,40);
-    if(req.method==='POST' && action==='login') {
-      const mssv=safeStr(body.mssv,20).toUpperCase();
-      if(!ALLOWED_MSSV.has(mssv))return fail(res,403,'MSSV không nằm trong danh sách thành viên');
-      const found=await sql`SELECT id,role,room_id FROM sync_members WHERE room_id=${FIXED_ROOM} AND mssv=${mssv} LIMIT 1`;
-      if(!found.length)return fail(res,403,'MSSV không thuộc phòng cố định');
-      const token=memberToken();
-      await sql`INSERT INTO sync_sessions(token_hash,member_id,expires_at) VALUES (${hash(token)},${found[0].id},now()+interval '30 days')`;
-      res.setHeader('Cache-Control','no-store');
-      return res.status(200).json({roomId:FIXED_ROOM,memberId:found[0].id,token,role:found[0].role});
+function namesFrom(value){
+ if(!Array.isArray(value)||value.length<3||value.length>8)return null;
+ const names=value.map(n=>safeStr(n,65));
+ if(names.some(n=>n.length<2||n.length>65||/[\r\n\t<>]/.test(n)))return null;
+ if(new Set(names.map(n=>n.toLocaleLowerCase('vi-VN'))).size!==names.length)return null;
+ return names;
+}
+export default async function handler(req,res){
+ res.setHeader('Cache-Control','no-store');
+ if(!process.env.DATABASE_URL)return fail(res,503,'Database chưa được cấu hình trên Vercel');
+ if(!['GET','POST'].includes(req.method))return fail(res,405,'Method không được hỗ trợ');
+ if(req.method==='POST'&&!checkOrigin(req))return fail(res,403,'Origin không hợp lệ');
+ const sql=neon(process.env.DATABASE_URL);
+ try{
+  if(req.method==='POST'&&req.headers['content-length']&&Number(req.headers['content-length'])>MAX_BODY)return fail(res,413,'Dữ liệu quá lớn');
+  const body=req.method==='POST'?(req.body||{}):{};
+  if(typeof body!=='object'||Array.isArray(body))return fail(res,400,'Dữ liệu không hợp lệ');
+  const action=safeStr(body.action,40);
+
+  // Anyone may create their own room. The first member becomes its admin.
+  // The room and member records are inserted in a single transaction.
+  if(req.method==='POST'&&action==='create'){
+    const name=safeStr(body.group,100),subject=safeStr(body.subject,100);
+    const names=namesFrom(body.members);
+    const pin=safeStr(body.pin,10);
+    if(!name||!subject||!names)return fail(res,400,'Nhập tên nhóm, môn học và 3–8 thành viên có tên khác nhau');
+    if(!/^\d{4}$/.test(pin))return fail(res,400,'Trưởng nhóm cần đặt mã PIN gồm đúng 4 số');
+    const newRoomId='SS-'+randomBytes(6).toString('hex').toUpperCase();
+    const hostId=randomUUID(),salt=randomBytes(16).toString('hex'),hashed=pinDigest(pin,salt),token=memberToken();
+    const memberIds=names.map((_,i)=>i===0?hostId:randomUUID());
+    const operations=[
+      sql`INSERT INTO sync_rooms(id,name,subject) VALUES (${newRoomId},${name},${subject})`,
+      ...names.map((memberName,i)=>sql`INSERT INTO sync_members(id,room_id,name,role,token_hash,color,pin_hash,pin_salt,claimed_at)
+        VALUES (${memberIds[i]},${newRoomId},${memberName},${i===0?'admin':'member'},${hash(memberToken())},${colors[i%colors.length]},${i===0?hashed:null},${i===0?salt:null},${i===0?new Date():null})`),
+      sql`INSERT INTO sync_sessions(token_hash,member_id,expires_at) VALUES (${hash(token)},${hostId},now()+interval '90 days')`
+    ];
+    await sql.transaction(operations);
+    return res.status(201).json({roomId:newRoomId,memberId:hostId,token,role:'admin'});
+  }
+
+  const roomId=req.method==='GET'?safeStr(req.query.room,40):safeStr(body.roomId,40);
+  if(!roomPattern.test(roomId))return fail(res,400,'Mã phòng không hợp lệ');
+
+  // Public room roster for the SINGLE shared invite URL; do not expose tasks or tokens.
+  if(req.method==='GET'&&req.query.public==='1'){
+    const [rooms,members]=await Promise.all([
+      sql`SELECT id,name,subject FROM sync_rooms WHERE id=${roomId}`,
+      sql`SELECT id,name,role,color,(claimed_at IS NOT NULL) AS claimed
+          FROM sync_members WHERE room_id=${roomId} ORDER BY created_at,id`
+    ]);
+    if(!rooms.length)return fail(res,404,'Không tìm thấy phòng này');
+    return res.status(200).json({room:rooms[0],members});
+  }
+
+  // Claiming is an atomic UPDATE ... WHERE claimed_at IS NULL.
+  // Even simultaneous requests can never claim the same identity twice.
+  if(req.method==='POST'&&(action==='claim'||action==='pin_login')){
+    const memberId=safeStr(body.memberId,90),pin=safeStr(body.pin,10);
+    if(!validId(memberId)||!/^\d{4}$/.test(pin))return fail(res,400,'Chọn tên và nhập mã PIN gồm 4 chữ số');
+    const found=await sql`SELECT id,role,claimed_at,pin_hash,pin_salt,pin_failures,lock_until
+      FROM sync_members WHERE id=${memberId} AND room_id=${roomId} LIMIT 1`;
+    if(!found.length)return fail(res,404,'Không có thành viên này trong phòng');
+    const m=found[0];
+    if(action==='claim'){
+      if(m.claimed_at)return fail(res,409,'Tên này đã được nhận. Nếu là bạn, hãy đăng nhập bằng mã PIN.');
+      const salt=randomBytes(16).toString('hex'),digest=pinDigest(pin,salt);
+      const changed=await sql`UPDATE sync_members SET pin_hash=${digest},pin_salt=${salt},claimed_at=now(),
+        pin_failures=0,lock_until=NULL WHERE id=${memberId} AND room_id=${roomId}
+        AND claimed_at IS NULL RETURNING id,role`;
+      if(!changed.length)return fail(res,409,'Tên vừa được thành viên khác nhận; vui lòng tải lại danh sách.');
+    }else{
+      if(!m.claimed_at||!m.pin_hash||!m.pin_salt)return fail(res,409,'Tên này chưa được nhận. Hãy đặt PIN lần đầu.');
+      if(m.lock_until&&new Date(m.lock_until).getTime()>Date.now())return fail(res,429,'Đã nhập sai PIN quá nhiều. Hãy thử lại sau 15 phút.');
+      const expected=Buffer.from(m.pin_hash,'hex'),actual=Buffer.from(pinDigest(pin,m.pin_salt),'hex');
+      if(expected.length!==actual.length||!timingSafeEqual(expected,actual)){
+        await sql`UPDATE sync_members SET pin_failures=pin_failures+1,
+          lock_until=CASE WHEN pin_failures+1>=5 THEN now()+interval '15 minutes' ELSE lock_until END
+          WHERE id=${memberId} AND room_id=${roomId}`;
+        return fail(res,401,'Mã PIN không chính xác');
+      }
+      await sql`UPDATE sync_members SET pin_failures=0,lock_until=NULL WHERE id=${memberId} AND room_id=${roomId}`;
     }
-    if(req.method==='POST' && action==='create')return fail(res,403,'Chỉ hỗ trợ phòng cố định; không thể tạo phòng khác');
-    const roomId=req.method==='GET'?safeStr(req.query.room,40):safeStr(body.roomId,40);
-    if (!roomPattern.test(roomId)||roomId!==FIXED_ROOM) return fail(res,403,'Chỉ hỗ trợ phòng cố định');
-    const token = (req.headers.authorization||'').replace(/^Bearer\s+/i,'').trim();
-    if(!token || token.length>300) return fail(res,401,'Bạn cần đăng nhập bằng link mời riêng');
-    const tokenHash=hash(token);
-    const authorized=await sql`SELECT m.id,m.name,m.role,m.color,m.mssv FROM sync_members m JOIN sync_sessions s ON s.member_id=m.id WHERE m.room_id=${roomId} AND m.mssv=ANY(ARRAY['DE220314','DE220280','DE220297']) AND s.token_hash=${tokenHash} AND s.expires_at>now() LIMIT 1`;
-    if(authorized.length===0) return fail(res,403,'Link mời không hợp lệ hoặc đã được thu hồi');
-    const actor=authorized[0];
-    if(req.method==='GET') {
-      const [rooms,members,busy,tasks]=await Promise.all([
-        sql`SELECT id,name,subject,created_at FROM sync_rooms WHERE id=${roomId}`,
-        sql`SELECT id,name,role,color,mssv FROM sync_members WHERE room_id=${roomId} AND mssv=ANY(ARRAY['DE220314','DE220280','DE220297']) ORDER BY created_at,id`,
-        sql`SELECT member_id,day,slot FROM sync_busy WHERE room_id=${roomId}`,
-        sql`SELECT id,title,description,assignee_id,points,difficulty,deadline,status,proof_url,verified_by,verified_at,created_at FROM sync_tasks WHERE room_id=${roomId} ORDER BY created_at DESC`]);
-      if(!rooms.length) return fail(res,404,'Không tìm thấy phòng');
-      res.setHeader('Cache-Control','no-store');
-      return res.status(200).json({room:rooms[0],me:actor,members,busy,tasks});
-    }
+    const token=memberToken();
+    await sql`INSERT INTO sync_sessions(token_hash,member_id,expires_at)
+        VALUES (${hash(token)},${memberId},now()+interval '90 days')`;
+    return res.status(200).json({roomId,memberId,token,role:m.role});
+  }
+
+  const token=(req.headers.authorization||'').replace(/^Bearer\s+/i,'').trim();
+  if(!token||token.length>300)return fail(res,401,'Vui lòng chọn tên và đăng nhập để tiếp tục');
+  const authorized=await sql`SELECT m.id,m.name,m.role,m.color
+    FROM sync_members m JOIN sync_sessions s ON s.member_id=m.id
+    WHERE m.room_id=${roomId} AND s.token_hash=${hash(token)} AND s.expires_at>now()
+    LIMIT 1`;
+  if(!authorized.length)return fail(res,401,'Phiên đăng nhập đã hết hạn. Hãy chọn tên và đăng nhập lại.');
+  const actor=authorized[0];
+
+  if(req.method==='GET'){
+    const [rooms,members,busy,tasks]=await Promise.all([
+      sql`SELECT id,name,subject,created_at FROM sync_rooms WHERE id=${roomId}`,
+      sql`SELECT id,name,role,color,(claimed_at IS NOT NULL) AS claimed FROM sync_members
+        WHERE room_id=${roomId} ORDER BY created_at,id`,
+      sql`SELECT member_id,day,slot FROM sync_busy WHERE room_id=${roomId}`,
+      sql`SELECT id,title,description,assignee_id,points,difficulty,deadline,status,proof_url,
+        verified_by,verified_at,created_at FROM sync_tasks WHERE room_id=${roomId} ORDER BY created_at DESC`
+    ]);
+    if(!rooms.length)return fail(res,404,'Không tìm thấy phòng');
+    return res.status(200).json({room:rooms[0],me:actor,members,busy,tasks});
+  }
+  if(action==='logout'){
+    await sql`DELETE FROM sync_sessions WHERE token_hash=${hash(token)}`;
+    return res.status(200).json({ok:true});
+  }
     if(action==='busy_batch') {
       const cells=body.cells;
       if(!Array.isArray(cells)||cells.length<1||cells.length>42||typeof body.busy!=='boolean')return fail(res,400,'Danh sách ca học không hợp lệ');
@@ -144,15 +212,15 @@ export default async function handler(req,res) {
       if(!done.length)return fail(res,409,'Task vừa được thành viên khác nhận, hãy quay lại');
       return res.status(200).json({ok:true,taskId:task.id,memberId:chosen.id,title:done[0].title});
     }
-    if(action==='room_edit') {
-      if(actor.role!=='admin'||actor.mssv!=='DE220314')return fail(res,403,'Chỉ host DE220314 được sửa phòng');
+    if(action==='room_edit'){
+      if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm được sửa phòng');
       const group=safeStr(body.group,100),subject=safeStr(body.subject,100);
       if(!group||!subject)return fail(res,400,'Nhập tên nhóm và môn học');
       await sql`UPDATE sync_rooms SET name=${group},subject=${subject},updated_at=now() WHERE id=${roomId}`;
       return res.status(200).json({ok:true});
     }
-    if(action==='member_add')return fail(res,403,'Danh sách MSSV cố định, không thể thêm thành viên');
-    if(action==='member_invite')return fail(res,403,'Thành viên tham gia bằng MSSV, không dùng link mời');
+    if(action==='member_add')return fail(res,403,'Danh sách thành viên được đặt khi tạo phòng');
+    if(action==='member_invite')return fail(res,403,'Cả nhóm dùng chung một link phòng');
     return fail(res,404,'Tác vụ không được hỗ trợ');
-  } catch(err){return errorResponse(res,err);}
+  }catch(err){return errorResponse(res,err)}
 }
