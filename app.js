@@ -176,8 +176,40 @@ ${tab==='projects'?projectsView():tab==='overview'?overview():tab==='schedule'?s
 icons();if(tab==='report')drawChart();}
 function drawChart(){if(!window.Chart)return;const canvas=document.getElementById('donut');if(!canvas)return;if(chart){chart.destroy();chart=null}chart=new Chart(canvas,{type:'doughnut',data:{labels:people().map(m=>m.name),datasets:[{data:people().map(m=>score(m.id)),backgroundColor:people().map(m=>m.color),borderWidth:3,borderColor:'#fff',hoverOffset:6}]},options:{maintainAspectRatio:false,cutout:'72%',plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:15,boxWidth:7,font:{family:'Inter',size:11}}}}}});}
 function modalHead(title,sub=''){return `<div class="dialog-head"><div><h2>${title}</h2><p>${sub}</p></div><button class="close-btn" data-action="close" aria-label="Đóng">${icon('x')}</button></div>`}
-function taskDialog(t){if(you()?.role!=='admin')return toast('Chỉ trưởng nhóm được tạo hoặc sửa nhiệm vụ');t=t||{};modal(`${modalHead(t.id?'Chỉnh sửa công việc':'Tạo công việc mới','Mỗi nhiệm vụ có độ khó và điểm rõ ràng.')}<label>Tiêu đề *</label><input id="taskTitle" class="field" maxlength="160" value="${escapeHTML(t.title||'')}" placeholder="Ví dụ: Thiết kế giao diện đăng nhập"><label>Mô tả</label><textarea id="taskDesc" class="field" maxlength="1000" placeholder="Mục tiêu, tiêu chí hoàn thành...">${escapeHTML(t.description||'')}</textarea><div class="fields"><div><label>Phụ trách</label><select class="field" id="taskAssignee"><option value="">Chưa phân công</option>${people().map(m=>`<option value="${m.id}" ${t.assignee_id===m.id?'selected':''}>${escapeHTML(m.name)}</option>`).join('')}</select></div><div><label>Độ khó</label><select class="field" id="taskDifficulty">${[['easy','Dễ — 10 điểm'],['medium','Trung bình — 25 điểm'],['hard','Gánh team — 50 điểm']].map(([v,n])=>`<option value="${v}" ${(t.difficulty||'medium')===v?'selected':''}>${n}</option>`).join('')}</select></div></div><label>Deadline</label><input type="date" class="field" id="taskDeadline" value="${escapeHTML(t.deadline?String(t.deadline).slice(0,10):'')}"><div class="dialog-actions">${button('Hủy','close')}${button(t.id?'Lưu thay đổi':'Tạo task','saveTask','check','btn primary',t.id?`data-id="${t.id}"`:'')}</div>`)}
 
+function taskDialog(t){
+ if(you()?.role!=='admin')return toast('Chỉ trưởng nhóm được tạo hoặc sửa nhiệm vụ');
+ t=t||{};
+ const project=activeProject();
+ if(!project)return toast('Vui lòng chọn một đồ án trước khi tạo nhiệm vụ');
+ modal(`${modalHead(t.id?'Chỉnh sửa nhiệm vụ':'Tạo nhiệm vụ mới','Trưởng nhóm giao việc; thành viên nộp bằng chứng và trưởng nhóm duyệt hoàn thành.')}
+   <div class="task-project-context">${icon('folder-kanban',16)} Đồ án: <b>${escapeHTML(project.name)}</b></div>
+   <label for="taskTitle">Tiêu đề nhiệm vụ *</label>
+   <input id="taskTitle" class="field" maxlength="160" required
+      value="${escapeHTML(t.title||'')}" placeholder="Ví dụ: Thiết kế giao diện đăng nhập">
+   <label for="taskDesc">Mô tả</label>
+   <textarea id="taskDesc" class="field" maxlength="1000"
+      placeholder="Mục tiêu, tiêu chí hoàn thành...">${escapeHTML(t.description||'')}</textarea>
+   <div class="fields">
+     <div><label for="taskAssignee">Phụ trách</label>
+       <select class="field" id="taskAssignee">
+         <option value="">Chưa phân công</option>
+         ${people().map(m=>`<option value="${escapeHTML(m.id)}" ${t.assignee_id===m.id?'selected':''}>${escapeHTML(m.name)}</option>`).join('')}
+       </select></div>
+     <div><label for="taskDifficulty">Độ khó / điểm</label>
+       <select class="field" id="taskDifficulty">
+         ${[['easy','Dễ — 10 điểm'],['medium','Trung bình — 25 điểm'],['hard','Gánh team — 50 điểm']].map(([v,n])=>`<option value="${v}" ${(t.difficulty||'medium')===v?'selected':''}>${n}</option>`).join('')}
+       </select></div>
+   </div>
+   <label for="taskDeadline">Deadline</label>
+   <input type="date" class="field" id="taskDeadline"
+     value="${escapeHTML(t.deadline?String(t.deadline).slice(0,10):'')}">
+   <div class="task-form-hint">${icon('shield-check',15)} Điểm chỉ được cộng khi có link bằng chứng và trưởng nhóm xác nhận hoàn thành.</div>
+   <div class="alert task-form-error" id="taskFormError" hidden role="alert"></div>
+   <div class="dialog-actions">${button('Hủy','close')}
+     ${button(t.id?'Lưu thay đổi':'Tạo nhiệm vụ','saveTask','check','btn primary',t.id?`data-id="${escapeHTML(t.id)}"`:'')}
+   </div>`);
+}
 function memberDialog(){
   const admin=you().role==='admin';
   modal(`${modalHead('Thành viên & Link mời chung','Chỉ cần sao chép một link và gửi vào nhóm chat.')}
@@ -339,10 +371,19 @@ if(act==='saveTask'){
   deadline:document.getElementById('taskDeadline').value
  };
  working=true;
- await api(id?'task_edit':'task_create',id?{id,...data}:data);
- closeDialog();
- await refresh(true);
- toast(id?'Đã lưu thay đổi':'Đã tạo nhiệm vụ thành công!');
+ const submit=document.querySelector('[data-action="saveTask"]');
+ if(submit){submit.disabled=true;submit.textContent='Đang lưu...';}
+ try{
+   await api(id?'task_edit':'task_create',id?{id,...data}:data);
+   closeDialog();
+   await refresh(true);
+   toast(id?'Đã lưu thay đổi':'Đã tạo nhiệm vụ thành công!');
+ }catch(err){
+   const box=document.getElementById('taskFormError');
+   if(box){box.textContent=alertText(err);box.hidden=false;}
+   if(submit){submit.disabled=false;submit.textContent=id?'Lưu thay đổi':'Tạo nhiệm vụ';}
+   throw err;
+ }
  return;
 }
 if(act==='toggleedit'){editingBusy=!editingBusy;render();return}
