@@ -200,6 +200,15 @@ async function animateWheel(winner){const index=people().findIndex(m=>m.id===win
 async function exportMarkdown(){const lines=[`# BÁO CÁO ĐÓNG GÓP — ${current.room.name} / ${activeProject()?.name||'Đồ án chính'}`,`Môn học: ${current.room.subject}`,`Room ID: ${roomId}`,`Ngày xuất: ${new Date().toLocaleDateString('vi-VN')}`,'','| Thành viên | Task xác minh | Điểm | Tỷ lệ | Xếp loại |','|---|---:|---:|---:|---|',...people().map(m=>`| ${m.name} | ${current.tasks.filter(t=>t.assignee_id===m.id&&t.status==='done'&&t.verified_by).length} | ${score(m.id)} | ${percent(m.id)}% | ${grade(percent(m.id))} |`),'','## Danh sách công việc','| Công việc | Người phụ trách | Trạng thái | Điểm | Bằng chứng | Người duyệt |','|---|---|---|---:|---|---|',...current.tasks.map(t=>`| ${t.title} | ${member(t.assignee_id)?.name||'Chưa nhận'} | ${STATUS[t.status]} | ${t.points} | ${t.proof_url||'—'} | ${member(t.verified_by)?.name||'—'} |`)];await copy(lines.join('\n'))}
 function parseText(text){const cells=[];const portions=text.split(/(?=thứ\s*[2-7]|chủ\s*nhật|\bcn\b)/i);for(const p of portions){const dayMatch=p.match(/thứ\s*([2-7])/i);const d=dayMatch?Number(dayMatch[1])-2:(/chủ\s*nhật|\bcn\b/i.test(p)?6:-1);if(d<0)continue;for(const m of p.matchAll(/(?:slot|ca)\s*([1-6])|tiết\s*(\d{1,2})/gi)){const s=m[1]?Number(m[1])-1:Math.floor((Number(m[2])-1)/2);if(s>=0&&s<6)cells.push({day:d,slot:s})}}return [...new Map(cells.map(c=>[c.day+'-'+c.slot,c])).values()]}
 async function applyBusyPaint(){if(!drag||!drag.cells.length)return;const update=drag;drag=null;try{await api('busy_batch',{busy:update.busy,cells:update.cells});await refresh(true)}catch(err){toast(alertText(err));await refresh(true)}}
+
+async function switchProject(id,nextTab){
+ if(!projects().some(p=>p.id===id))throw new Error('Đồ án không thuộc nhóm hiện tại');
+ selectedProjectId=id;
+ localStorage.setItem('syncsquad-project-'+roomId,id);
+ if(nextTab)tab=nextTab;
+ await getState();
+ render();
+}
 async function init(){
   const asked=new URL(location.href).searchParams.get('room')?.toUpperCase();
   const last=localStorage.getItem('syncsquad-last-room');
@@ -216,6 +225,40 @@ async function init(){
 // Single delegated event handler keeps the SPA responsive after each render.
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action],[data-tab]');if(!el)return;const act=el.dataset.action,id=el.dataset.id;if(el.dataset.tab){tab=el.dataset.tab;render();return}try{
 if(act==='close')return closeDialog();
+
+if(act==='newProject')return projectDialog();
+if(act==='editProject'){
+ if(you().role!=='admin')return toast('Chỉ trưởng nhóm mới sửa được đồ án');
+ const p=projects().find(x=>x.id===id);
+ if(!p)return toast('Không tìm thấy đồ án');
+ return projectDialog(p);
+}
+if(act==='openProject'){
+ if(working)return;
+ working=true;
+ await switchProject(id,'tasks');
+ return;
+}
+if(act==='saveProject'){
+ if(you().role!=='admin')return toast('Chỉ trưởng nhóm được tạo hoặc sửa đồ án');
+ if(working)return;
+ const name=document.getElementById('projectName')?.value.trim()||'';
+ const description=document.getElementById('projectDescription')?.value.trim()||'';
+ if(name.length<2)return toast('Tên đồ án phải có ít nhất 2 ký tự');
+ working=true;
+ const result=await api(id?'project_edit':'project_create',{projectId:id||undefined,name,description});
+ closeDialog();
+ if(!id){
+   selectedProjectId=result.projectId;
+   localStorage.setItem('syncsquad-project-'+roomId,result.projectId);
+   tab='tasks';
+ }
+ await getState();
+ render();
+ toast(id?'Đã cập nhật đồ án':'Đã tạo đồ án mới cho nhóm!');
+ return;
+}
+
 if(act==='goHome'){
   session=null;current=null;roomId=null;publicRoom=null;
   history.replaceState(null,'',location.pathname);welcome();return;
@@ -297,7 +340,16 @@ if(act==='export'){await exportMarkdown();return}
 if(act==='print'){window.print();return}
 }catch(err){toast(alertText(err));console.error('SyncSquad:',err?.message||err)}finally{working=false}});
 document.addEventListener('click',e=>{const b=e.target.closest('[data-sos-type]');if(!b)return;document.querySelectorAll('[data-sos-type]').forEach(x=>x.classList.toggle('chosen',x===b))});
-document.addEventListener('change',async e=>{const el=e.target;if(el.dataset.status){const t=current.tasks.find(t=>t.id===el.dataset.status);if(!t)return;let proof='';if(el.value==='done'){el.value=t.status;toast('Muốn hoàn thành phải được thành viên khác bấm Duyệt task');return}if(el.value==='review'){proof=t.proof_url||prompt('Nhập link HTTPS Google Drive, GitHub hoặc Figma làm bằng chứng:')||'';if(!proof){el.value=t.status;return}}try{working=true;await api('task_status',{id:t.id,status:el.value,proof});await refresh(true);toast('Đã cập nhật trạng thái')}catch(err){el.value=t.status;toast(alertText(err))}finally{working=false}}});
+document.addEventListener('change',async e=>{
+ const el=e.target;
+ if(el.id==='projectSelect'){
+   if(working)return;
+   try{working=true;await switchProject(el.value)}
+   catch(err){toast(alertText(err));await refresh(true)}
+   finally{working=false}
+   return;
+ }
+ if(el.dataset.status){const t=current.tasks.find(t=>t.id===el.dataset.status);if(!t)return;let proof='';if(el.value==='done'){el.value=t.status;toast('Muốn hoàn thành phải được thành viên khác bấm Duyệt task');return}if(el.value==='review'){proof=t.proof_url||prompt('Nhập link HTTPS Google Drive, GitHub hoặc Figma làm bằng chứng:')||'';if(!proof){el.value=t.status;return}}try{working=true;await api('task_status',{id:t.id,status:el.value,proof});await refresh(true);toast('Đã cập nhật trạng thái')}catch(err){el.value=t.status;toast(alertText(err))}finally{working=false}}});
 dialog.addEventListener('click',e=>{if(e.target===dialog)closeDialog()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!dialog.hidden)closeDialog()});
 // Pointer capture / hover enables painting many consecutive cells before one database batch request.
