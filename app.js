@@ -3,10 +3,10 @@ const DAYS=['Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7','Chủ N
 const SLOTS=[['Ca 1','07:00','09:15'],['Ca 2','09:30','11:45'],['Ca 3','12:30','14:45'],['Ca 4','15:00','17:15'],['Ca 5','17:30','19:45'],['Ca 6','19:45','21:30']];
 const STATUS={todo:'Cần làm',progress:'Đang làm',review:'Chờ duyệt',done:'Hoàn thành'};
 const COLORS=['#6268e8','#0e9fcb','#19a576','#ed9d36','#a36be8','#e46b92','#64748b','#0d9488'];
-const ACTIVE_TABS={overview:'Tổng quan',projects:'Đồ án',schedule:'Lịch rảnh',tasks:'Nhiệm Vụ',report:'Đóng góp'};
+const ACTIVE_TABS={overview:'Tổng quan',schedule:'Lịch rảnh',tasks:'Nhiệm Vụ',report:'Đóng góp'};
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog');
 let current=null,roomId=null,session=null,tab='overview',editingBusy=false,drag=null,banner='',chart=null,pollTimer=null,rouletteResult='',working=false;
-let publicRoom=null,selectedMemberId=null,selectedProjectId=null;
+let publicRoom=null,selectedMemberId=null,selectedProjectId=null,roomProjectMenuOpen=false;
 const projects=()=>current?.projects||[];
 const activeProject=()=>projects().find(p=>p.id===selectedProjectId)||projects()[0]||null;
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -117,30 +117,36 @@ function recentTasks(){return current.tasks.slice(0,5).map(t=>`<div class="recen
 function busyFor(day,slot){return current.members.filter(m=>current.busy.some(b=>b.member_id===m.id&&b.day===day&&b.slot===slot));}
 function bestSlots(){const rows=[];for(let d=0;d<7;d++)for(let s=0;s<6;s++)rows.push({d,s,n:people().length-busyFor(d,s).length});return rows.sort((a,b)=>b.n-a.n||a.d-b.d||a.s-b.s)}
 
-function projectsView(){
- const list=projects();
- return `<section class="panel project-intro">
-   <div class="panel-head"><div><h2>Tất cả đồ án trong ${escapeHTML(current.room.name)}</h2>
-     <p>Mỗi đồ án có bảng Nhiệm Vụ, điểm đóng góp và báo cáo riêng. Lịch rảnh và danh sách thành viên được dùng chung.</p></div>
-     ${you().role==='admin'?button('Thêm đồ án','newProject','plus','btn primary'):''}
-   </div>
-   <div class="project-cards">${list.map(p=>`<article class="project-card ${p.id===selectedProjectId?'selected':''}">
-      <div class="project-card-head"><span class="project-card-icon">${icon('folder-kanban',22)}</span>
-        <span class="status-pill ${p.id===selectedProjectId?'done':'todo'}">${p.id===selectedProjectId?'Đang mở':p.is_default?'Đồ án chính':'Đồ án'}</span>
+
+function roomProjectHub(){
+ const active=activeProject();
+ const admin=you()?.role==='admin';
+ return `<section class="room-project-hub ${roomProjectMenuOpen?'expanded':''}" aria-label="Nhóm và đồ án">
+    <button type="button" class="room-project-trigger" data-action="toggleRoomProjects" aria-expanded="${roomProjectMenuOpen}" aria-controls="roomProjectChoices">
+      <span class="room-symbol">S</span>
+      <span class="room-project-meta">
+        <b title="${escapeHTML(current.room.name)}">${escapeHTML(current.room.name)}</b>
+        <small title="${escapeHTML(current.room.id+' · '+current.room.subject)}">${escapeHTML(current.room.id)} · ${escapeHTML(current.room.subject)}</small>
+        <span class="room-active-project">${icon('folder',13)} <span title="${escapeHTML(active?.name||'Đồ án chính')}">${escapeHTML(active?.name||'Đồ án chính')}</span></span>
+      </span>
+      <span class="room-project-chevron">${icon(roomProjectMenuOpen?'chevron-up':'chevron-down',16)}</span>
+    </button>
+    <div class="room-project-choices" id="roomProjectChoices" ${roomProjectMenuOpen?'':'hidden'}>
+      <div class="room-project-choices-caption"><span>THAM GIA ĐỒ ÁN</span><span>${projects().length} đồ án</span></div>
+      <div class="room-project-choices-list">
+        ${projects().map(p=>`<div class="room-project-option ${p.id===selectedProjectId?'selected':''}">
+          <button type="button" class="room-project-select" data-action="joinProject" data-id="${escapeHTML(p.id)}" aria-current="${p.id===selectedProjectId?'true':'false'}" title="Mở đồ án ${escapeHTML(p.name)}">
+            <span class="room-project-option-icon">${icon('folder-kanban',15)}</span>
+            <span class="room-project-option-info"><b>${escapeHTML(p.name)}</b><small>${p.done_count}/${p.task_count} nhiệm vụ hoàn thành</small></span>
+            ${p.id===selectedProjectId?icon('check',15):icon('arrow-up-right',15)}
+          </button>
+          ${admin?`<button class="room-project-edit" type="button" data-action="editProject" data-id="${escapeHTML(p.id)}" aria-label="Chỉnh sửa đồ án ${escapeHTML(p.name)}" title="Chỉnh sửa đồ án">${icon('pencil',14)}</button>`:''}
+        </div>`).join('')}
       </div>
-      <h3>${escapeHTML(p.name)}</h3>
-      <p>${escapeHTML(p.description||'Chưa có mô tả đồ án.')}</p>
-      <div class="project-card-stats"><span>${icon('list-checks',15)} ${p.task_count} nhiệm vụ</span>
-        <span>${icon('check-circle',15)} ${p.done_count} hoàn thành</span></div>
-      <div class="project-card-actions">
-        <button class="btn ${p.id===selectedProjectId?'':'primary'}" data-action="openProject" data-id="${escapeHTML(p.id)}">${icon('arrow-right',15)} ${p.id===selectedProjectId?'Xem Nhiệm Vụ':'Mở đồ án'}</button>
-        ${you().role==='admin'?`<button class="btn" data-action="editProject" data-id="${escapeHTML(p.id)}" title="Sửa tên và mô tả">${icon('pencil',15)}</button>`:''}
-      </div>
-   </article>`).join('')}</div>
- </section>
- <section class="panel project-explainer"><div class="project-help-icon">${icon('users-round',20)}</div>
- <div><h2>Một phòng nhóm, nhiều đồ án</h2><p>Vẫn dùng một đường link mời chung và cùng các thành viên. Trưởng nhóm quản lý đồ án; mọi người làm nhiệm vụ trong đồ án được chọn và tính điểm công bằng theo từng đồ án.</p></div>
- </section>`;
+      ${admin?`<button type="button" class="room-project-create" data-action="newProject">${icon('plus-circle',16)} Tạo đồ án mới</button>`:''}
+      <p class="room-project-note">Cùng thành viên và một link phòng. Nhiệm vụ, điểm số được tính theo từng đồ án.</p>
+    </div>
+  </section>`;
 }
 function projectDialog(p){
  if(you()?.role!=='admin')return toast('Chỉ trưởng nhóm được quản lý đồ án');
@@ -163,16 +169,8 @@ function taskCard(t){const who=member(t.assignee_id);const deadline=t.deadline?S
 function tasksView(){const available=current.tasks.filter(t=>!t.assignee_id&&t.status==='todo').length;return `<div class="toolbar"><div><b>${current.tasks.length} công việc</b> <small>· ${available} task chưa nhận</small></div>${you().role==='admin'?button('🎯 Chốt đơn bằng vòng quay','roulette','rotate-cw','btn primary',available?'':'disabled'):'<span class="member-notice">Trưởng nhóm phụ trách tạo và duyệt nhiệm vụ</span>'}</div>${rouletteResult?`<div class="roulette-status">🎉 ${escapeHTML(rouletteResult)}</div>`:''}<div class="kanban">${Object.entries(STATUS).map(([s,label],i)=>`<section class="kan-col"><div class="kan-header"><i class="status-dot" style="background:${['#96a1b4','#5b8ee6','#e8ad44','#24a16c'][i]}"></i>${label}<span class="col-count">${current.tasks.filter(t=>t.status===s).length}</span></div>${current.tasks.filter(t=>t.status===s).map(taskCard).join('')||'<div class="empty">Chưa có task</div>'}</section>`).join('')}</div>`}
 function reportView(){return `<div class="report-columns"><section class="panel"><div class="panel-head"><div><h2>Tỷ lệ đóng góp</h2><p>Điểm nhiệm vụ đã được trưởng nhóm duyệt</p></div><span class="status-pill done">LIVE</span></div><div class="chart-wrap"><canvas id="donut"></canvas></div><div style="text-align:center;color:#8490a2;font-size:11px">Tổng điểm hợp lệ: <b style="font-size:17px;color:#172033">${total()}</b></div></section><section class="panel"><div class="panel-head"><div><h2>Thanh máu cống hiến</h2><p>Mức chuẩn công bằng: ${fair().toFixed(1)}% mỗi người</p></div>${icon('shield-check',19)}</div>${contributionBars()}</section></div><section class="panel"><div class="panel-head"><div><h2>Bảng tổng kết nộp giảng viên</h2><p>Xuất Markdown hoặc in trực tiếp ra PDF khổ A4</p></div><div class="actions">${button('Copy bảng Markdown','export','copy')}${button('In / Lưu PDF','print','printer')}</div></div><div class="report-table"><table><thead><tr><th>Thành viên</th><th>Task đã duyệt</th><th>Điểm</th><th>Tỷ lệ</th><th>Xếp loại</th><th>Đánh giá</th></tr></thead><tbody>${people().map(m=>{const p=percent(m.id),max=Math.max(0,...people().map(x=>score(x.id)));const badge=score(m.id)===max&&max>0?'<span class="mini-tag mvp">✦ MVP Gánh Team</span>':total()&&p<fair()/2?'<span class="mini-tag risk">⚠ Nguy cơ Free-Rider</span>':'<span style="color:#97a2b3">Đang theo dõi</span>';return `<tr><td><div class="person">${avatar(m,true)}<b>${escapeHTML(m.name)}</b></div></td><td>${current.tasks.filter(t=>t.assignee_id===m.id&&t.status==='done'&&t.verified_by).length}</td><td><b>${score(m.id)}</b></td><td>${p}%</td><td><span class="grade">${grade(p)}</span></td><td>${badge}</td></tr>`}).join('')}</tbody></table></div></section><section class="panel"><div class="panel-head"><div><h2>Đối chiếu bằng chứng</h2><p>Mọi task hoàn thành phải có link chứng minh và người duyệt</p></div></div><div class="report-table"><table><thead><tr><th>Nhiệm vụ</th><th>Người nhận</th><th>Trạng thái</th><th>Điểm</th><th>Bằng chứng</th><th>Người duyệt</th></tr></thead><tbody>${current.tasks.map(t=>`<tr><td>${escapeHTML(t.title)}</td><td>${escapeHTML(member(t.assignee_id)?.name||'Chưa nhận')}</td><td>${STATUS[t.status]}</td><td>${t.points}</td><td>${t.proof_url?`<a href="${escapeHTML(t.proof_url)}" target="_blank" rel="noopener noreferrer" style="color:#5962da">Mở link ↗</a>`:'—'}</td><td>${escapeHTML(member(t.verified_by)?.name||'—')}</td></tr>`).join('')}</tbody></table></div></section>`}
 function render(){if(!current)return welcome();const open=current.tasks.filter(t=>t.status!=='done').length;const project=activeProject();
-app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>STUDENT WORKSPACE</small></div></div><div class="room-tile"><span class="room-symbol">S</span><div style="min-width:0;flex:1"><b>${escapeHTML(current.room.name)}</b><small>${escapeHTML(current.room.id)} · ${escapeHTML(current.room.subject)}</small></div>${icon('chevron-down',14)}</div><div class="nav-caption">ĐỒ ÁN ĐANG CHỌN</div>
-  <div class="project-switcher">
-    <span class="project-switch-icon">${icon('folder-kanban',16)}</span>
-    <select id="projectSelect" aria-label="Chọn đồ án">
-      ${projects().map(p=>`<option value="${escapeHTML(p.id)}" ${p.id===selectedProjectId?'selected':''}>${escapeHTML(p.name)}</option>`).join('')}
-    </select>
-  </div>
-  ${you().role==='admin'? `<button class="side-create-project" data-action="newProject">${icon('plus',14)} Tạo đồ án mới</button>`:''}
-  <div class="nav-caption">KHÔNG GIAN LÀM VIỆC</div><nav class="nav">${[['overview','layout-dashboard','Tổng quan'],['projects','folder-kanban','Đồ án'],['schedule','calendar-days','Ma trận lịch'],['tasks','list-checks','Nhiệm Vụ'],['report','chart-pie','Đóng góp']].map(([s,i,l])=>`<button class="${tab===s?'active':''}" data-tab="${s}">${icon(i)}${l}${s==='tasks'?`<span class="nav-count">${open}</span>`:''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="hint-box">${icon('circle-help',19)}<div><b>Làm nhóm thông minh</b><small>Lịch rảnh, phân việc & đánh giá chéo</small></div></div><button class="btn" data-action="logout" style="margin-top:12px;font-size:11px">${icon('log-out',14)} Đăng xuất</button></div></aside><section class="main"><header class="topbar"><div class="crumb">Workspace　/　<b>${ACTIVE_TABS[tab]}</b></div><div class="top-right"><span class="sync-ok">Đã kết nối Neon</span>${button('Copy link phòng','copyInvite','link')}${button('Thành viên','members','users')}${avatar(you())}</div></header><div class="content">${banner?`<div class="sos-alert">${icon('siren',19)}<div style="flex:1"><b>BÁO ĐỘNG NHÓM</b><small>${escapeHTML(banner)}</small></div><button class="link-action" data-action="dismiss">${icon('x',15)}</button></div>`:''}<div class="heading"><div><div class="eyebrow">${escapeHTML(current.room.name.toUpperCase())} · ${tab==='projects'?'DANH SÁCH ĐỒ ÁN':escapeHTML(project?.name||'Đồ án chính')}</div><h1>${tab==='overview'?'Chào '+escapeHTML(you().name.split(' ').pop())+' 👋':tab==='projects'?'Đồ án của nhóm':tab==='schedule'?'Ma trận lịch rảnh':tab==='tasks'?'Nhiệm Vụ':'Báo cáo đóng góp'}</h1><p>${tab==='overview'?'Tiến độ của '+escapeHTML(project?.name||'Đồ án chính')+' và sự đóng góp của các thành viên.':tab==='projects'?'Trưởng nhóm quản lý nhiều đồ án trong một phòng. Thành viên, lịch học và link mời dùng chung.':tab==='schedule'?'Lịch rảnh dùng chung cho mọi đồ án trong phòng.':tab==='tasks'?'Nhiệm vụ của '+escapeHTML(project?.name||'Đồ án chính')+' — bằng chứng rõ ràng, trưởng nhóm duyệt.':'Báo cáo điểm riêng của '+escapeHTML(project?.name||'Đồ án chính')+'.'}</p></div><div class="actions">${button('Thành viên','members','users')}${tab==='projects'?(you().role==='admin'?button('Tạo đồ án','newProject','plus','btn primary'):''):(you().role==='admin'?button('Tạo nhiệm vụ','newtask','plus','btn primary'):'')}</div></div>
-${tab==='projects'?projectsView():tab==='overview'?overview():tab==='schedule'?schedule():tab==='tasks'?tasksView():reportView()}<div class="footer"><span>© 2026 SyncSquad · ${escapeHTML(roomId)}</span><span class="online">Đang đồng bộ dữ liệu</span></div></div></section></div><button class="fab" data-action="sos">${icon('siren',21)}<span>TRIỆU TẬP SOS</span></button>`;
+app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>STUDENT WORKSPACE</small></div></div>${roomProjectHub()}<div class="nav-caption">KHÔNG GIAN LÀM VIỆC</div><nav class="nav">${[['overview','layout-dashboard','Tổng quan'],['schedule','calendar-days','Ma trận lịch'],['tasks','list-checks','Nhiệm Vụ'],['report','chart-pie','Đóng góp']].map(([s,i,l])=>`<button class="${tab===s?'active':''}" data-tab="${s}">${icon(i)}${l}${s==='tasks'?`<span class="nav-count">${open}</span>`:''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="hint-box">${icon('circle-help',19)}<div><b>Làm nhóm thông minh</b><small>Lịch rảnh, phân việc & đánh giá chéo</small></div></div><button class="btn" data-action="logout" style="margin-top:12px;font-size:11px">${icon('log-out',14)} Đăng xuất</button></div></aside><section class="main"><header class="topbar"><div class="crumb">Workspace　/　<b>${ACTIVE_TABS[tab]}</b></div><div class="top-right"><span class="sync-ok">Đã kết nối Neon</span>${button('Copy link phòng','copyInvite','link')}${button('Thành viên','members','users')}${avatar(you())}</div></header><div class="content">${banner?`<div class="sos-alert">${icon('siren',19)}<div style="flex:1"><b>BÁO ĐỘNG NHÓM</b><small>${escapeHTML(banner)}</small></div><button class="link-action" data-action="dismiss">${icon('x',15)}</button></div>`:''}<div class="heading"><div><div class="eyebrow">${escapeHTML(current.room.name.toUpperCase())} · ${escapeHTML(project?.name||'Đồ án chính')}</div><h1>${tab==='overview'?'Chào '+escapeHTML(you().name.split(' ').pop())+' 👋':tab==='schedule'?'Ma trận lịch rảnh':tab==='tasks'?'Nhiệm Vụ':'Báo cáo đóng góp'}</h1><p>${tab==='overview'?'Tiến độ của '+escapeHTML(project?.name||'Đồ án chính')+' và sự đóng góp của các thành viên.':tab==='schedule'?'Lịch rảnh dùng chung cho mọi đồ án trong phòng.':tab==='tasks'?'Nhiệm vụ của '+escapeHTML(project?.name||'Đồ án chính')+' — bằng chứng rõ ràng, trưởng nhóm duyệt.':'Báo cáo điểm riêng của '+escapeHTML(project?.name||'Đồ án chính')+'.'}</p></div><div class="actions">${you().role==='admin'?button('Tạo nhiệm vụ','newtask','plus','btn primary'):''}</div></div>
+${tab==='overview'?overview():tab==='schedule'?schedule():tab==='tasks'?tasksView():reportView()}<div class="footer"><span>© 2026 SyncSquad · ${escapeHTML(roomId)}</span><span class="online">Đang đồng bộ dữ liệu</span></div></div></section></div><button class="fab" data-action="sos">${icon('siren',21)}<span>TRIỆU TẬP SOS</span></button>`;
 icons();if(tab==='report')drawChart();}
 function drawChart(){if(!window.Chart)return;const canvas=document.getElementById('donut');if(!canvas)return;if(chart){chart.destroy();chart=null}chart=new Chart(canvas,{type:'doughnut',data:{labels:people().map(m=>m.name),datasets:[{data:people().map(m=>score(m.id)),backgroundColor:people().map(m=>m.color),borderWidth:3,borderColor:'#fff',hoverOffset:6}]},options:{maintainAspectRatio:false,cutout:'72%',plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:15,boxWidth:7,font:{family:'Inter',size:11}}}}}});}
 function modalHead(title,sub=''){return `<div class="dialog-head"><div><h2>${title}</h2><p>${sub}</p></div><button class="close-btn" data-action="close" aria-label="Đóng">${icon('x')}</button></div>`}
@@ -238,6 +236,7 @@ async function switchProject(id,nextTab){
  selectedProjectId=id;
  localStorage.setItem('syncsquad-project-'+roomId,id);
  if(nextTab)tab=nextTab;
+ roomProjectMenuOpen=false;
  await getState();
  render();
 }
@@ -258,6 +257,14 @@ async function init(){
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action],[data-tab]');if(!el)return;const act=el.dataset.action,id=el.dataset.id;if(el.dataset.tab){tab=el.dataset.tab;render();return}try{
 if(act==='close')return closeDialog();
 
+if(act==='toggleRoomProjects'){roomProjectMenuOpen=!roomProjectMenuOpen;render();return}
+if(act==='joinProject'){
+ if(working)return;
+ try{working=true;roomProjectMenuOpen=false;await switchProject(id,'tasks');}
+ catch(err){toast(alertText(err));await refresh(true)}
+ finally{working=false}
+ return;
+}
 if(act==='newProject')return projectDialog();
 if(act==='editProject'){
  if(you().role!=='admin')return toast('Chỉ trưởng nhóm mới sửa được đồ án');
