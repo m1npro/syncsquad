@@ -75,3 +75,42 @@
 .task-form-error[hidden]{display:none}
 .member-notice{display:inline-flex;align-items:center;font-size:11px;color:#8b95a6;background:#f2f3f8;border-radius:8px;padding:8px 11px}
 @media(max-width:710px){.member-notice{width:100%;white-space:normal}}
+
+
+/* Unified group + project hub (one click expands the shared project list). */
+.room-project-hub{border:1px solid #e1e5f1;border-radius:13px;background:#f9faff;margin:0 0 24px;overflow:hidden;box-shadow:0 2px 10px #26385805}
+.room-project-trigger{width:100%;display:flex;align-items:flex-start;text-align:left;gap:10px;padding:12px 10px;background:transparent;color:#18243a;border:0}
+.room-project-trigger:hover{background:#f1f3ff}
+.room-project-trigger:focus-visible,.room-project-select:focus-visible,.room-project-create:focus-visible,.room-project-edit:focus-visible{outline:2px solid #6366e8;outline-offset:-2px}
+.room-project-trigger .room-symbol{flex:none;margin-top:1px}
+.room-project-meta{display:flex;flex-direction:column;flex:1;min-width:0;gap:2px}
+.room-project-meta>b{font-size:12px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.room-project-meta>small{color:#8b96a8;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.room-active-project{display:flex;align-items:center;gap:5px;margin-top:6px;font-size:11px;font-weight:800;color:#5962de;min-width:0}
+.room-active-project>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.room-project-chevron{display:grid;place-items:center;color:#6f7990;margin-top:3px;flex:none}
+.room-project-choices{border-top:1px solid #e6e8f6;background:#fff;padding:11px 9px 10px}
+.room-project-choices[hidden]{display:none!important}
+.room-project-choices-caption{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:9px;color:#98a3b5;font-weight:900;letter-spacing:.8px;padding:0 3px 8px}
+.room-project-choices-caption>span:last-child{letter-spacing:0;text-transform:none;font-weight:600;font-size:9px}
+.room-project-choices-list{display:grid;gap:5px;max-height:240px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.room-project-option{display:flex;align-items:stretch;min-width:0;border:1px solid transparent;border-radius:9px}
+.room-project-option.selected{background:#f0f1ff;border-color:#dadcfb}
+.room-project-option:not(.selected):hover{background:#f7f8fc;border-color:#eef0f7}
+.room-project-select{display:flex;align-items:center;gap:8px;text-align:left;min-width:0;flex:1;padding:9px 6px;background:transparent;border:0;color:#37445c;cursor:pointer}
+.room-project-option-icon{display:grid;place-items:center;color:#6770e8;flex:none}
+.room-project-option-info{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.room-project-option-info b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.room-project-option-info small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px;color:#909bad}
+.room-project-select>svg:last-child{flex:none;color:#7a82d7}
+.room-project-edit{border:0;background:transparent;color:#96a0b1;padding:8px 5px;display:grid;place-items:center;flex:none}
+.room-project-edit:hover{color:#5962de}
+.room-project-create{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;background:#f7f8ff;color:#5a62dc;border:1px dashed #c6cbf6;border-radius:9px;padding:10px 7px;margin-top:9px;font-size:11px;font-weight:800}
+.room-project-create:hover{background:#ededff;border-color:#6f73ef}
+.room-project-note{font-size:9px;color:#99a4b4;line-height:1.55;margin:9px 3px 0}
+@media(max-width:710px){
+  .sidebar .room-project-hub{display:block;margin:1px 1px 10px}
+  .room-project-trigger{align-items:center;padding:9px 11px}
+  .room-project-meta>small{font-size:10px}
+  .room-project-choices-list{max-height:235px}
+}
