@@ -172,9 +172,99 @@ function render(){if(!current)return welcome();const open=current.tasks.filter(t
 app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">✦</span><div>SyncSquad<small>STUDENT WORKSPACE</small></div></div>${roomProjectHub()}<div class="nav-caption">KHÔNG GIAN LÀM VIỆC</div><nav class="nav">${[['overview','layout-dashboard','Tổng quan'],['schedule','calendar-days','Ma trận lịch'],['tasks','list-checks','Nhiệm Vụ'],['report','chart-pie','Đóng góp']].map(([s,i,l])=>`<button class="${tab===s?'active':''}" data-tab="${s}">${icon(i)}${l}${s==='tasks'?`<span class="nav-count">${open}</span>`:''}</button>`).join('')}</nav><div class="sidebar-bottom"><div class="hint-box">${icon('circle-help',19)}<div><b>Làm nhóm thông minh</b><small>Lịch rảnh, phân việc & đánh giá chéo</small></div></div><button class="btn" data-action="logout" style="margin-top:12px;font-size:11px">${icon('log-out',14)} Đăng xuất</button></div></aside><section class="main"><header class="topbar"><div class="crumb">Workspace　/　<b>${ACTIVE_TABS[tab]}</b></div><div class="top-right"><span class="sync-ok">Đã kết nối Neon</span>${button('Copy link phòng','copyInvite','link')}${button('Thành viên','members','users')}${avatar(you())}</div></header><div class="content">${banner?`<div class="sos-alert">${icon('siren',19)}<div style="flex:1"><b>BÁO ĐỘNG NHÓM</b><small>${escapeHTML(banner)}</small></div><button class="link-action" data-action="dismiss">${icon('x',15)}</button></div>`:''}<div class="heading"><div><div class="eyebrow">${escapeHTML(current.room.name.toUpperCase())} · ${escapeHTML(project?.name||'Đồ án chính')}</div><h1>${tab==='overview'?'Chào '+escapeHTML(you().name.split(' ').pop())+' 👋':tab==='schedule'?'Ma trận lịch rảnh':tab==='tasks'?'Nhiệm Vụ':'Báo cáo đóng góp'}</h1><p>${tab==='overview'?'Tiến độ của '+escapeHTML(project?.name||'Đồ án chính')+' và sự đóng góp của các thành viên.':tab==='schedule'?'Lịch rảnh dùng chung cho mọi đồ án trong phòng.':tab==='tasks'?'Nhiệm vụ của '+escapeHTML(project?.name||'Đồ án chính')+' — bằng chứng rõ ràng, trưởng nhóm duyệt.':'Báo cáo điểm riêng của '+escapeHTML(project?.name||'Đồ án chính')+'.'}</p></div><div class="actions">${you().role==='admin'?button('Tạo nhiệm vụ','newtask','plus','btn primary'):''}</div></div>
 ${tab==='overview'?overview():tab==='schedule'?schedule():tab==='tasks'?tasksView():reportView()}<div class="footer"><span>© 2026 SyncSquad · ${escapeHTML(roomId)}</span><span class="online">Đang đồng bộ dữ liệu</span></div></div></section></div><button class="fab" data-action="sos">${icon('siren',21)}<span>TRIỆU TẬP SOS</span></button>`;
 icons();if(tab==='report')drawChart();}
-function drawChart(){if(!window.Chart)return;const canvas=document.getElementById('donut');if(!canvas)return;if(chart){chart.destroy();chart=null}chart=new Chart(canvas,{type:'doughnut',data:{labels:people().map(m=>m.name),datasets:[{data:people().map(m=>score(m.id)),backgroundColor:people().map(m=>m.color),borderWidth:3,borderColor:'#fff',hoverOffset:6}]},options:{maintainAspectRatio:false,cutout:'72%',plugins:{legend:{position:'bottom',labels:{usePointStyle:true,padding:15,boxWidth:7,font:{family:'Inter',size:11}}}}}});}
-function modalHead(title,sub=''){return `<div class="dialog-head"><div><h2>${title}</h2><p>${sub}</p></div><button class="close-btn" data-action="close" aria-label="Đóng">${icon('x')}</button></div>`}
 
+const donutPercentPlugin={
+ id:'syncsquadDonutPercent',
+ afterDatasetsDraw(chartInstance){
+   const dataset=chartInstance.data.datasets[0];
+   const data=dataset.data.map(Number);
+   const sum=data.reduce((a,b)=>a+b,0);
+   const meta=chartInstance.getDatasetMeta(0);
+   if(!meta?.data?.length)return;
+   const ctx=chartInstance.ctx;
+   const first=meta.data.find(Boolean);
+   if(!first)return;
+   const base=first.getProps(['x','y'],true);
+   ctx.save();
+   if(sum<=0){
+     ctx.fillStyle='#8b96ab';ctx.textAlign='center';ctx.textBaseline='middle';
+     ctx.font='700 19px Inter, sans-serif';
+     ctx.fillText('0%',base.x,base.y);
+     ctx.font='500 10px Inter, sans-serif';
+     ctx.fillText('Chưa có điểm',base.x,base.y+21);
+     ctx.restore();
+     return;
+   }
+   meta.data.forEach((arc,i)=>{
+     const value=data[i]||0;if(value<=0)return;
+     const item=arc.getProps(['x','y','innerRadius','outerRadius','startAngle','endAngle'],true);
+     const mid=(item.startAngle+item.endAngle)/2;
+     const pct=Math.round(100*value/sum);
+     const midRadius=(item.innerRadius+item.outerRadius)/2;
+     const arcLength=(item.endAngle-item.startAngle)*midRadius;
+     const label=pct+'%';
+     const inside=arcLength>=Math.max(30,label.length*8+5) && (item.outerRadius-item.innerRadius)>=22;
+     ctx.font='800 12px Inter, sans-serif';
+     ctx.textBaseline='middle';
+     if(inside){
+       ctx.fillStyle='#fff';ctx.textAlign='center';
+       ctx.shadowColor='#142c4266';ctx.shadowBlur=3;
+       ctx.fillText(label,item.x+Math.cos(mid)*midRadius,item.y+Math.sin(mid)*midRadius);
+       ctx.shadowBlur=0;
+     }else{
+       // When a slice is too narrow, a short leader keeps its percentage readable.
+       const x1=item.x+Math.cos(mid)*(item.outerRadius-4);
+       const y1=item.y+Math.sin(mid)*(item.outerRadius-4);
+       const x2=item.x+Math.cos(mid)*(item.outerRadius+11);
+       const y2=item.y+Math.sin(mid)*(item.outerRadius+11);
+       ctx.strokeStyle=Array.isArray(dataset.backgroundColor)?dataset.backgroundColor[i]:'#5962da';
+       ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+       ctx.fillStyle='#354357';ctx.textAlign=Math.cos(mid)<0?'right':'left';
+       ctx.fillText(label,x2+(Math.cos(mid)<0?-5:5),y2);
+     }
+   });
+   ctx.restore();
+ }
+};
+function drawChart(){
+ if(!window.Chart)return;
+ const canvas=document.getElementById('donut');
+ if(!canvas)return;
+ if(chart){chart.destroy();chart=null}
+ const values=people().map(m=>score(m.id));
+ const grandTotal=values.reduce((a,b)=>a+b,0);
+ chart=new Chart(canvas,{
+   type:'doughnut',
+   data:{labels:people().map(m=>m.name),datasets:[{
+     data:values,backgroundColor:people().map(m=>m.color),
+     borderWidth:3,borderColor:'#fff',hoverOffset:6
+   }]},
+   plugins:[donutPercentPlugin],
+   options:{
+     maintainAspectRatio:false,cutout:'67%',
+     animation:{duration:450},
+     plugins:{
+       tooltip:{callbacks:{label(context){
+         const points=context.parsed||0;
+         return ' '+points+' điểm ('+(grandTotal?Math.round(points/grandTotal*100):0)+'%)';
+       }}},
+       legend:{
+         position:'bottom',
+         labels:{
+           usePointStyle:true,padding:15,boxWidth:7,
+           font:{family:'Inter',size:11},
+           generateLabels(instance){
+             return Chart.defaults.plugins.legend.labels.generateLabels(instance).map((item,i)=>({
+               ...item,
+               text:item.text+' ('+(grandTotal?Math.round(values[i]/grandTotal*100):0)+'%)'
+             }));
+           }
+         }
+       }
+     }
+   }
+ });
+}
 function taskDialog(t){
  if(you()?.role!=='admin')return toast('Chỉ trưởng nhóm được tạo hoặc sửa nhiệm vụ');
  t=t||{};
