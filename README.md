@@ -51,8 +51,3 @@ SyncSquad dùng HTML5, Tailwind CSS (CDN), Vanilla JavaScript và Neon PostgreSQ
 - `POST /api/room` `action=project_edit` (host): cập nhật tên, mô tả.
 - Tất cả hành động thao tác nhiệm vụ phải gửi `projectId` hợp lệ, thuộc cùng phòng người dùng.
 - Dữ liệu task cũ được giữ trong đồ án mặc định khi chạy `db/schema.sql`.
-
-## Khắc phục lỗi 23502 khi tạo nhiệm vụ
-- Mã nhiệm vụ (`project_id`) bắt buộc từ khi hỗ trợ nhiều đồ án. Tạo nhiệm vụ gửi `projectId` là ID đồ án đang chọn, API kiểm tra ID thuộc đúng phòng và ghi vào cột `sync_tasks.project_id`.
-- PostgreSQL 23502 là lỗi thiếu dữ liệu NOT NULL; frontend nay hiển thị lỗi cụ thể tại hộp tạo nhiệm vụ.
-- Cấu trúc PostgreSQL mới đã được triển khai và các nhiệm vụ trước đây được liên kết đến đồ án chính.
