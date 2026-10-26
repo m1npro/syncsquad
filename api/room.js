@@ -22,8 +22,13 @@ function checkOrigin(req){
  try{return new URL(origin).host===(req.headers['x-forwarded-host']||req.headers.host)}catch{return false}
 }
 function errorResponse(res,err){
- console.error('SyncSquad database/API error',err?.code||err?.name||'unknown');
- return fail(res,500,'Có lỗi máy chủ. Hãy thử lại sau.');
+ const code=err?.code||'';
+ console.error('SyncSquad database/API error',code,err?.constraint||'');
+ if(code==='23502')return fail(res,409,'Một trường dữ liệu bắt buộc đang bị thiếu. Vui lòng tải lại trang, chọn đúng đồ án và thử lại.');
+ if(code==='23503')return fail(res,409,'Dữ liệu liên kết không còn hợp lệ. Hãy làm mới phòng hoặc chọn lại người phụ trách.');
+ if(code==='23505')return fail(res,409,'Dữ liệu bị trùng. Hãy làm mới danh sách trước khi thử lại.');
+ if(code==='23514'||code==='22P02'||code==='22007')return fail(res,400,'Thông tin không hợp lệ. Kiểm tra nội dung và ngày hạn của nhiệm vụ.');
+ return fail(res,500,'Máy chủ đang gặp lỗi. Vui lòng thử lại sau.');
 }
 function namesFrom(value){
  if(!Array.isArray(value)||value.length<3||value.length>8)return null;
@@ -207,6 +212,7 @@ export default async function handler(req,res){
       return res.status(200).json({ok:true});
     }
     if(action==='task_create') {
+      if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm mới được tạo nhiệm vụ');
       const title=safeStr(body.title,160), description=safeStr(body.description,1000),difficulty=safeStr(body.difficulty,20);
       const points=difficultyPoints[difficulty];
       if(!title||!points) return fail(res,400,'Tên task hoặc độ khó không hợp lệ');
@@ -219,6 +225,7 @@ export default async function handler(req,res){
       return res.status(201).json({ok:true,id});
     }
     if(action==='task_edit') {
+      if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm mới được chỉnh sửa hoặc phân công nhiệm vụ');
       const id=safeStr(body.id,90), title=safeStr(body.title,160),description=safeStr(body.description,1000),difficulty=safeStr(body.difficulty,20),assignee=safeStr(body.assigneeId,90)||null,deadline=body.deadline?safeStr(body.deadline,10):null;
       if(!validId(id)||!title||!difficultyPoints[difficulty])return fail(res,400,'Dữ liệu task không hợp lệ');
       const current=await sql`SELECT status FROM sync_tasks WHERE id=${id} AND room_id=${roomId} AND project_id=${projectId}`;
@@ -236,6 +243,8 @@ export default async function handler(req,res){
       const current=await sql`SELECT status,proof_url,assignee_id FROM sync_tasks WHERE room_id=${roomId} AND project_id=${projectId} AND id=${id}`;
       if(!current.length)return fail(res,404,'Không tìm thấy task');
       if(current[0].status==='done')return fail(res,409,'Task đã xác minh không được thay đổi trạng thái');
+      if(actor.role!=='admin'&&current[0].assignee_id!==actor.id)
+        return fail(res,403,'Chỉ người được phân công hoặc trưởng nhóm mới được cập nhật tiến độ');
       if(status==='review') {
         const proof=safeStr(body.proof||current[0].proof_url,1800);
         if(!proofOK(proof))return fail(res,400,'Cần link HTTPS GitHub, Google Drive hoặc Figma');
@@ -245,13 +254,15 @@ export default async function handler(req,res){
       return res.status(200).json({ok:true});
     }
     if(action==='verify') {
+      if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm được duyệt hoàn thành nhiệm vụ');
       const id=safeStr(body.id,90);
       if(!validId(id))return fail(res,400,'Task ID không hợp lệ');
-      const updated=await sql`UPDATE sync_tasks SET status='done',verified_by=${actor.id},verified_at=now(),updated_at=now() WHERE id=${id} AND room_id=${roomId} AND project_id=${projectId} AND status='review' AND assignee_id IS NOT NULL AND assignee_id<>${actor.id} AND proof_url<>'' RETURNING id`;
-      if(!updated.length)return fail(res,409,'Chỉ thành viên khác người thực hiện mới có thể duyệt task ở trạng thái Review');
-      return res.status(200).json({ok:true});
+      const updated=await sql`UPDATE sync_tasks SET status='done',verified_by=${actor.id},verified_at=now(),updated_at=now() WHERE id=${id} AND room_id=${roomId} AND project_id=${projectId} AND status='review' AND assignee_id IS NOT NULL AND proof_url<>'' RETURNING id,assignee_id`;
+      if(!updated.length)return fail(res,409,'Chỉ duyệt nhiệm vụ đang Chờ duyệt, đã phân công và có link bằng chứng');
+      return res.status(200).json({ok:true,selfApproved:updated[0].assignee_id===actor.id});
     }
     if(action==='roulette') {
+      if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm được quay để phân công nhiệm vụ');
       const candidates=await sql`SELECT id FROM sync_tasks WHERE room_id=${roomId} AND project_id=${projectId} AND assignee_id IS NULL AND status='todo' ORDER BY id`;
       const members=await sql`SELECT id FROM sync_members WHERE room_id=${roomId} ORDER BY id`;
       if(!candidates.length || !members.length)return fail(res,409,'Không có task chưa ai nhận');
