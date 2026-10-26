@@ -55,10 +55,13 @@ export default async function handler(req,res){
     const newRoomId='SS-'+randomBytes(6).toString('hex').toUpperCase();
     const hostId=randomUUID(),salt=randomBytes(16).toString('hex'),hashed=pinDigest(pin,salt),token=memberToken();
     const memberIds=names.map((_,i)=>i===0?hostId:randomUUID());
+    const defaultProjectId='prj-'+newRoomId;
     const operations=[
       sql`INSERT INTO sync_rooms(id,name,subject) VALUES (${newRoomId},${name},${subject})`,
       ...names.map((memberName,i)=>sql`INSERT INTO sync_members(id,room_id,name,role,token_hash,color,pin_hash,pin_salt,claimed_at)
         VALUES (${memberIds[i]},${newRoomId},${memberName},${i===0?'admin':'member'},${hash(memberToken())},${colors[i%colors.length]},${i===0?hashed:null},${i===0?salt:null},${i===0?new Date():null})`),
+      sql`INSERT INTO sync_projects(id,room_id,name,description,is_default,created_by)
+        VALUES (${defaultProjectId},${newRoomId},'Đồ án chính','Đồ án đầu tiên trong nhóm',true,${hostId})`,
       sql`INSERT INTO sync_sessions(token_hash,member_id,expires_at) VALUES (${hash(token)},${hostId},now()+interval '90 days')`
     ];
     await sql.transaction(operations);
@@ -122,21 +125,66 @@ export default async function handler(req,res){
   if(!authorized.length)return fail(res,401,'Phiên đăng nhập đã hết hạn. Hãy chọn tên và đăng nhập lại.');
   const actor=authorized[0];
 
+
   if(req.method==='GET'){
-    const [rooms,members,busy,tasks]=await Promise.all([
+    const [rooms,members,busy,projects]=await Promise.all([
       sql`SELECT id,name,subject,created_at FROM sync_rooms WHERE id=${roomId}`,
       sql`SELECT id,name,role,color,(claimed_at IS NOT NULL) AS claimed FROM sync_members
         WHERE room_id=${roomId} ORDER BY created_at,id`,
       sql`SELECT member_id,day,slot FROM sync_busy WHERE room_id=${roomId}`,
-      sql`SELECT id,title,description,assignee_id,points,difficulty,deadline,status,proof_url,
-        verified_by,verified_at,created_at FROM sync_tasks WHERE room_id=${roomId} ORDER BY created_at DESC`
+      sql`SELECT p.id,p.name,p.description,p.is_default,p.created_at,
+          COUNT(t.id)::integer AS task_count,
+          COUNT(t.id) FILTER (WHERE t.status='done')::integer AS done_count
+        FROM sync_projects p LEFT JOIN sync_tasks t ON t.project_id=p.id
+        WHERE p.room_id=${roomId}
+        GROUP BY p.id ORDER BY p.is_default DESC,p.created_at,p.id`
     ]);
     if(!rooms.length)return fail(res,404,'Không tìm thấy phòng');
-    return res.status(200).json({room:rooms[0],me:actor,members,busy,tasks});
+    const requested=safeStr(req.query.project,90);
+    const activeProject=projects.find(p=>p.id===requested)||projects.find(p=>p.is_default)||projects[0];
+    if(!activeProject)return fail(res,409,'Phòng chưa được khởi tạo đồ án');
+    const tasks=await sql`SELECT id,title,description,assignee_id,points,difficulty,deadline,status,proof_url,
+        verified_by,verified_at,created_at,project_id FROM sync_tasks
+        WHERE room_id=${roomId} AND project_id=${activeProject.id} ORDER BY created_at DESC`;
+    return res.status(200).json({room:rooms[0],me:actor,members,busy,projects,activeProjectId:activeProject.id,tasks});
   }
   if(action==='logout'){
     await sql`DELETE FROM sync_sessions WHERE token_hash=${hash(token)}`;
     return res.status(200).json({ok:true});
+  }
+
+  if(action==='project_create'){
+    if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm mới được tạo đồ án');
+    const name=safeStr(body.name,100),description=safeStr(body.description,600);
+    if(name.length<2)return fail(res,400,'Tên đồ án phải có ít nhất 2 ký tự');
+    const counts=await sql`SELECT COUNT(*)::integer AS n FROM sync_projects WHERE room_id=${roomId}`;
+    if(counts[0].n>=30)return fail(res,409,'Một nhóm có tối đa 30 đồ án');
+    const projectId=randomUUID();
+    const inserted=await sql`INSERT INTO sync_projects(id,room_id,name,description,created_by)
+      VALUES (${projectId},${roomId},${name},${description},${actor.id})
+      ON CONFLICT DO NOTHING RETURNING id,name`;
+    if(!inserted.length)return fail(res,409,'Tên đồ án đã tồn tại trong nhóm');
+    return res.status(201).json({ok:true,projectId:inserted[0].id,name:inserted[0].name});
+  }
+  if(action==='project_edit'){
+    if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm mới được sửa đồ án');
+    const projectId=safeStr(body.projectId,90),name=safeStr(body.name,100),description=safeStr(body.description,600);
+    if(!validId(projectId)||name.length<2)return fail(res,400,'Tên hoặc mã đồ án không hợp lệ');
+    const changed=await sql`UPDATE sync_projects SET name=${name},description=${description},updated_at=now()
+      WHERE id=${projectId} AND room_id=${roomId}
+      AND NOT EXISTS(SELECT 1 FROM sync_projects other
+        WHERE other.room_id=${roomId} AND lower(other.name)=lower(${name}) AND other.id<>${projectId})
+      RETURNING id`;
+    if(!changed.length)return fail(res,409,'Không tìm thấy đồ án hoặc tên đã tồn tại');
+    return res.status(200).json({ok:true});
+  }
+  // Scope every task mutation to an existing project in the actor's room.
+  const projectAction=['task_create','task_edit','task_status','verify','roulette'].includes(action);
+  const projectId=safeStr(body.projectId,90);
+  if(projectAction){
+    if(!validId(projectId))return fail(res,400,'Hãy chọn đồ án trước khi quản lý nhiệm vụ');
+    const permitted=await sql`SELECT id FROM sync_projects WHERE id=${projectId} AND room_id=${roomId} LIMIT 1`;
+    if(!permitted.length)return fail(res,404,'Đồ án không tồn tại trong nhóm của bạn');
   }
     if(action==='busy_batch') {
       const cells=body.cells;
@@ -167,48 +215,48 @@ export default async function handler(req,res){
       const deadline=body.deadline ? safeStr(body.deadline,10) : null;
       if(deadline && !/^\d{4}-\d{2}-\d{2}$/.test(deadline))return fail(res,400,'Deadline không hợp lệ');
       const id=randomUUID();
-      await sql`INSERT INTO sync_tasks(id,room_id,title,description,assignee_id,difficulty,points,deadline) VALUES (${id},${roomId},${title},${description},${assignee},${difficulty},${points},${deadline})`;
+      await sql`INSERT INTO sync_tasks(id,room_id,project_id,title,description,assignee_id,difficulty,points,deadline) VALUES (${id},${roomId},${projectId},${title},${description},${assignee},${difficulty},${points},${deadline})`;
       return res.status(201).json({ok:true,id});
     }
     if(action==='task_edit') {
       const id=safeStr(body.id,90), title=safeStr(body.title,160),description=safeStr(body.description,1000),difficulty=safeStr(body.difficulty,20),assignee=safeStr(body.assigneeId,90)||null,deadline=body.deadline?safeStr(body.deadline,10):null;
       if(!validId(id)||!title||!difficultyPoints[difficulty])return fail(res,400,'Dữ liệu task không hợp lệ');
-      const current=await sql`SELECT status FROM sync_tasks WHERE id=${id} AND room_id=${roomId}`;
+      const current=await sql`SELECT status FROM sync_tasks WHERE id=${id} AND room_id=${roomId} AND project_id=${projectId}`;
       if(!current.length)return fail(res,404,'Không có task');
       if(current[0].status==='done')return fail(res,409,'Task đã xác minh không thể chỉnh sửa');
       if(assignee){const m=await sql`SELECT id FROM sync_members WHERE room_id=${roomId} AND id=${assignee}`;if(!m.length)return fail(res,400,'Người phụ trách không thuộc phòng');}
       if(deadline&&!/^\d{4}-\d{2}-\d{2}$/.test(deadline))return fail(res,400,'Deadline không hợp lệ');
-      await sql`UPDATE sync_tasks SET title=${title},description=${description},assignee_id=${assignee},difficulty=${difficulty},points=${difficultyPoints[difficulty]},deadline=${deadline},updated_at=now() WHERE id=${id} AND room_id=${roomId} AND status<>'done'`;
+      await sql`UPDATE sync_tasks SET title=${title},description=${description},assignee_id=${assignee},difficulty=${difficulty},points=${difficultyPoints[difficulty]},deadline=${deadline},updated_at=now() WHERE id=${id} AND room_id=${roomId} AND project_id=${projectId} AND status<>'done'`;
       return res.status(200).json({ok:true});
     }
     if(action==='task_status') {
       const id=safeStr(body.id,90), status=safeStr(body.status,20);
       if(!validId(id)||!statuses.includes(status))return fail(res,400,'Trạng thái không hợp lệ');
       if(status==='done') return fail(res,409,'Chỉ hoàn thành qua chức năng Duyệt task');
-      const current=await sql`SELECT status,proof_url,assignee_id FROM sync_tasks WHERE room_id=${roomId} AND id=${id}`;
+      const current=await sql`SELECT status,proof_url,assignee_id FROM sync_tasks WHERE room_id=${roomId} AND project_id=${projectId} AND id=${id}`;
       if(!current.length)return fail(res,404,'Không tìm thấy task');
       if(current[0].status==='done')return fail(res,409,'Task đã xác minh không được thay đổi trạng thái');
       if(status==='review') {
         const proof=safeStr(body.proof||current[0].proof_url,1800);
         if(!proofOK(proof))return fail(res,400,'Cần link HTTPS GitHub, Google Drive hoặc Figma');
         if(!current[0].assignee_id)return fail(res,400,'Cần phân công người phụ trách trước khi chờ duyệt');
-        await sql`UPDATE sync_tasks SET status='review',proof_url=${proof},verified_by=NULL,verified_at=NULL,updated_at=now() WHERE room_id=${roomId} AND id=${id} AND status<>'done'`;
-      }else await sql`UPDATE sync_tasks SET status=${status},verified_by=NULL,verified_at=NULL,updated_at=now() WHERE room_id=${roomId} AND id=${id} AND status<>'done'`;
+        await sql`UPDATE sync_tasks SET status='review',proof_url=${proof},verified_by=NULL,verified_at=NULL,updated_at=now() WHERE room_id=${roomId} AND project_id=${projectId} AND id=${id} AND status<>'done'`;
+      }else await sql`UPDATE sync_tasks SET status=${status},verified_by=NULL,verified_at=NULL,updated_at=now() WHERE room_id=${roomId} AND project_id=${projectId} AND id=${id} AND status<>'done'`;
       return res.status(200).json({ok:true});
     }
     if(action==='verify') {
       const id=safeStr(body.id,90);
       if(!validId(id))return fail(res,400,'Task ID không hợp lệ');
-      const updated=await sql`UPDATE sync_tasks SET status='done',verified_by=${actor.id},verified_at=now(),updated_at=now() WHERE id=${id} AND room_id=${roomId} AND status='review' AND assignee_id IS NOT NULL AND assignee_id<>${actor.id} AND proof_url<>'' RETURNING id`;
+      const updated=await sql`UPDATE sync_tasks SET status='done',verified_by=${actor.id},verified_at=now(),updated_at=now() WHERE id=${id} AND room_id=${roomId} AND project_id=${projectId} AND status='review' AND assignee_id IS NOT NULL AND assignee_id<>${actor.id} AND proof_url<>'' RETURNING id`;
       if(!updated.length)return fail(res,409,'Chỉ thành viên khác người thực hiện mới có thể duyệt task ở trạng thái Review');
       return res.status(200).json({ok:true});
     }
     if(action==='roulette') {
-      const candidates=await sql`SELECT id FROM sync_tasks WHERE room_id=${roomId} AND assignee_id IS NULL AND status='todo' ORDER BY id`;
+      const candidates=await sql`SELECT id FROM sync_tasks WHERE room_id=${roomId} AND project_id=${projectId} AND assignee_id IS NULL AND status='todo' ORDER BY id`;
       const members=await sql`SELECT id FROM sync_members WHERE room_id=${roomId} ORDER BY id`;
       if(!candidates.length || !members.length)return fail(res,409,'Không có task chưa ai nhận');
       const task=candidates[Math.floor(Math.random()*candidates.length)],chosen=members[Math.floor(Math.random()*members.length)];
-      const done=await sql`UPDATE sync_tasks SET assignee_id=${chosen.id},updated_at=now() WHERE id=${task.id} AND room_id=${roomId} AND assignee_id IS NULL RETURNING id,title`;
+      const done=await sql`UPDATE sync_tasks SET assignee_id=${chosen.id},updated_at=now() WHERE id=${task.id} AND room_id=${roomId} AND project_id=${projectId} AND assignee_id IS NULL RETURNING id,title`;
       if(!done.length)return fail(res,409,'Task vừa được thành viên khác nhận, hãy quay lại');
       return res.status(200).json({ok:true,taskId:task.id,memberId:chosen.id,title:done[0].title});
     }
