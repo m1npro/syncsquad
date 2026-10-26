@@ -137,7 +137,7 @@ export default async function handler(req,res){
       sql`SELECT id,name,role,color,(claimed_at IS NOT NULL) AS claimed FROM sync_members
         WHERE room_id=${roomId} ORDER BY created_at,id`,
       sql`SELECT member_id,day,slot FROM sync_busy WHERE room_id=${roomId}`,
-      sql`SELECT p.id,p.name,p.description,p.is_default,p.created_at,
+      sql`SELECT p.id,p.name,p.description,p.is_default,p.created_by,p.created_at,
           COUNT(t.id)::integer AS task_count,
           COUNT(t.id) FILTER (WHERE t.status='done')::integer AS done_count
         FROM sync_projects p LEFT JOIN sync_tasks t ON t.project_id=p.id
@@ -159,7 +159,8 @@ export default async function handler(req,res){
   }
 
   if(action==='project_create'){
-    if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm mới được tạo đồ án');
+    // Any authenticated room member may start a project in their own room.
+    // Task creation and completion approval remain leader-only.
     const name=safeStr(body.name,100),description=safeStr(body.description,600);
     if(name.length<2)return fail(res,400,'Tên đồ án phải có ít nhất 2 ký tự');
     const counts=await sql`SELECT COUNT(*)::integer AS n FROM sync_projects WHERE room_id=${roomId}`;
@@ -172,15 +173,17 @@ export default async function handler(req,res){
     return res.status(201).json({ok:true,projectId:inserted[0].id,name:inserted[0].name});
   }
   if(action==='project_edit'){
-    if(actor.role!=='admin')return fail(res,403,'Chỉ trưởng nhóm mới được sửa đồ án');
+    // Project creators can rename their own project; room leader can manage all.
+    // This is checked in the UPDATE itself to avoid modifying other rooms.
     const projectId=safeStr(body.projectId,90),name=safeStr(body.name,100),description=safeStr(body.description,600);
     if(!validId(projectId)||name.length<2)return fail(res,400,'Tên hoặc mã đồ án không hợp lệ');
     const changed=await sql`UPDATE sync_projects SET name=${name},description=${description},updated_at=now()
       WHERE id=${projectId} AND room_id=${roomId}
+      AND (created_by=${actor.id} OR ${actor.role}='admin')
       AND NOT EXISTS(SELECT 1 FROM sync_projects other
         WHERE other.room_id=${roomId} AND lower(other.name)=lower(${name}) AND other.id<>${projectId})
       RETURNING id`;
-    if(!changed.length)return fail(res,409,'Không tìm thấy đồ án hoặc tên đã tồn tại');
+    if(!changed.length)return fail(res,403,'Không thể sửa đồ án: bạn cần là người tạo hoặc trưởng nhóm, tên mới không được trùng');
     return res.status(200).json({ok:true});
   }
   // Scope every task mutation to an existing project in the actor's room.
