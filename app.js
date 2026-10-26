@@ -7,6 +7,7 @@ const ACTIVE_TABS={overview:'Tổng quan',schedule:'Lịch rảnh',tasks:'Nhiệ
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog');
 let current=null,roomId=null,session=null,tab='overview',editingBusy=false,drag=null,banner='',chart=null,pollTimer=null,rouletteResult='',working=false;
 let publicRoom=null,selectedMemberId=null,selectedProjectId=null,roomProjectMenuOpen=false;
+let pendingProjectId=null;
 const SIDEBAR_PREF_KEY='syncsquad-sidebar-open';
 let sidebarOpen=(()=>{
  const value=localStorage.getItem(SIDEBAR_PREF_KEY);
@@ -40,7 +41,7 @@ const percent=id=>total()?Math.round(100*score(id)/total()):0;
 const fair=()=>people().length?100/people().length:0;
 const grade=p=>p>=90?'A+':p>=75?'A':p>=55?'B':p>=35?'C':'D';
 const joined=()=>JSON.parse(localStorage.getItem('syncsquad-accounts')||'{}');
-function storeSession(id,memberId,token){selectedProjectId=null;const all=joined();all[id]={[memberId]:token};localStorage.setItem('syncsquad-accounts',JSON.stringify(all));localStorage.setItem('syncsquad-selected-'+id,memberId);localStorage.setItem('syncsquad-last-room',id);roomId=id;session={memberId,token};history.replaceState(null,'','/?room='+encodeURIComponent(id));}
+function storeSession(id,memberId,token){selectedProjectId=pendingProjectId||null;const all=joined();all[id]={[memberId]:token};localStorage.setItem('syncsquad-accounts',JSON.stringify(all));localStorage.setItem('syncsquad-selected-'+id,memberId);localStorage.setItem('syncsquad-last-room',id);roomId=id;session={memberId,token};history.replaceState(null,'',pendingProjectId?projectURL(pendingProjectId,id):shareURL(id));}
 function selectedSession(id){const accounts=joined()[id]||{};const preferred=localStorage.getItem('syncsquad-selected-'+id);const key=accounts[preferred]?preferred:Object.keys(accounts)[0];return key?{memberId:key,token:accounts[key]}:null;}
 function shareURL(id){return location.origin+'/?room='+encodeURIComponent(id);}
 function toast(message){const box=document.createElement('div');box.className='message';box.textContent=message;document.getElementById('toast').appendChild(box);setTimeout(()=>box.remove(),4300)}
@@ -57,12 +58,12 @@ async function api(action,payload={}){
 }
 async function getState(){
  if(!session||!roomId)return;
- const preferred=selectedProjectId||localStorage.getItem('syncsquad-project-'+roomId);
+ const preferred=selectedProjectId||pendingProjectId||localStorage.getItem('syncsquad-project-'+roomId);
  const url='/api/room?room='+encodeURIComponent(roomId)+(preferred?'&project='+encodeURIComponent(preferred):'');
  const response=await fetch(url,{headers:{'Authorization':'Bearer '+session.token},cache:'no-store'});
  const data=await response.json().catch(()=>({error:'Không tải được dữ liệu'}));
  if(!response.ok)throw new Error(data.error||'Không thể kết nối phòng');
- current=data;selectedProjectId=data.activeProjectId;
+ current=data;selectedProjectId=data.activeProjectId;pendingProjectId=null;
  if(selectedProjectId)localStorage.setItem('syncsquad-project-'+roomId,selectedProjectId);
  return data;
 }
@@ -397,15 +398,22 @@ async function applyBusyPaint(){if(!drag||!drag.cells.length)return;const update
 async function switchProject(id,nextTab){
  if(window.matchMedia('(max-width:710px)').matches){sidebarOpen=false;localStorage.setItem(SIDEBAR_PREF_KEY,'0');}
  if(!projects().some(p=>p.id===id))throw new Error('Đồ án không thuộc nhóm hiện tại');
- selectedProjectId=id;
+ selectedProjectId=id;pendingProjectId=null;
  localStorage.setItem('syncsquad-project-'+roomId,id);
+ history.replaceState(null,'',projectURL(id));
  if(nextTab)tab=nextTab;
  roomProjectMenuOpen=false;
  await getState();
  render();
 }
 async function init(){
-  const asked=new URL(location.href).searchParams.get('room')?.toUpperCase();
+  const requestedURL=new URL(location.href);
+  const asked=requestedURL.searchParams.get('room')?.toUpperCase();
+  const projectFromLink=requestedURL.searchParams.get('project');
+  if(asked&&projectFromLink&&/^[a-zA-Z0-9-]{8,90}$/.test(projectFromLink)){
+    pendingProjectId=projectFromLink;
+    selectedProjectId=projectFromLink;
+  }
   const last=localStorage.getItem('syncsquad-last-room');
   const id=asked||(last&&selectedSession(last)?last:null);
   if(id&&/^SS-[A-F0-9]{12}$/.test(id)){
@@ -441,11 +449,32 @@ if(act==='newProject'){
  if(sidebarOpen&&window.matchMedia('(max-width:710px)').matches){
    sidebarOpen=false;localStorage.setItem(SIDEBAR_PREF_KEY,'0');render();
  }
- return projectDialog();
+ return addProjectDialog();
+}
+if(act==='createProjectFromChooser')return projectDialog();
+if(act==='copyProjectLink'){
+ const p=projects().find(p=>p.id===id);
+ if(!p)return toast('Không tìm thấy đồ án');
+ await copy(projectURL(p.id));return;
+}
+if(act==='joinByProjectLink'){
+ if(working)return;
+ const input=document.getElementById('joinProjectURL')?.value||'';
+ const link=parseProjectLink(input);
+ if(link.room===roomId){
+   if(!projects().some(p=>p.id===link.project))throw Error('Không tìm thấy đồ án này trong nhóm hiện tại.');
+   working=true;
+   closeDialog();
+   await switchProject(link.project,'tasks');
+   toast('Đã mở đồ án được chia sẻ.');return;
+ }
+ pendingProjectId=link.project;
+ location.assign(projectURL(link.project,link.room));
+ return;
 }
 if(act==='editProject'){
- if(you().role!=='admin')return toast('Chỉ trưởng nhóm mới sửa được đồ án');
  const p=projects().find(x=>x.id===id);
+ if(!canManageProject(p))return toast('Chỉ người tạo hoặc trưởng nhóm mới sửa được đồ án');
  if(!p)return toast('Không tìm thấy đồ án');
  if(sidebarOpen&&window.matchMedia('(max-width:710px)').matches){
    sidebarOpen=false;localStorage.setItem(SIDEBAR_PREF_KEY,'0');render();
@@ -453,7 +482,8 @@ if(act==='editProject'){
  return projectDialog(p);
 }
 if(act==='saveProject'){
- if(you().role!=='admin')return toast('Chỉ trưởng nhóm được tạo hoặc sửa đồ án');
+ if(id&&!canManageProject(projects().find(p=>p.id===id)))
+   return toast('Chỉ người tạo hoặc trưởng nhóm được sửa đồ án');
  if(working)return;
  const name=document.getElementById('projectName')?.value.trim()||'';
  const description=document.getElementById('projectDescription')?.value.trim()||'';
@@ -464,6 +494,7 @@ if(act==='saveProject'){
  if(!id){
    selectedProjectId=result.projectId;
    localStorage.setItem('syncsquad-project-'+roomId,result.projectId);
+   history.replaceState(null,'',projectURL(result.projectId));
    tab='tasks';
  }
  roomProjectMenuOpen=false;
@@ -474,13 +505,14 @@ if(act==='saveProject'){
 }
 
 if(act==='goHome'){
-  session=null;current=null;roomId=null;publicRoom=null;
+  session=null;current=null;roomId=null;publicRoom=null;pendingProjectId=null;selectedProjectId=null;
   history.replaceState(null,'',location.pathname);welcome();return;
  }
  if(act==='openRoomById'){
   const id=(document.getElementById('joinRoomId')?.value||'').trim().toUpperCase();
   if(!/^SS-[A-F0-9]{12}$/.test(id))return toast('Room ID có dạng SS-XXXXXXXXXXXX');
-  history.replaceState(null,'','/?room='+encodeURIComponent(id));
+  pendingProjectId=null;selectedProjectId=null;
+  history.replaceState(null,'',shareURL(id));
   await openRoom(id);return;
  }
  if(act==='createRoom'){
@@ -613,4 +645,4 @@ document.addEventListener('pointerover',e=>{if(!drag||!editingBusy)return;const 
 document.addEventListener('pointerup',()=>{if(drag)applyBusyPaint()});
 document.addEventListener('pointercancel',()=>{if(drag)applyBusyPaint()});
 init().catch(err=>welcome(alertText(err)));
-document.addEventListener('keydown',e=>{if(e.key!=='Enter')return;const id=document.activeElement?.id;if(id==='joinRoomId')document.querySelector('[data-action=openRoomById]')?.click();if(id==='joinPin'||id==='joinPinConfirm')document.querySelector('[data-action=enterRoom]')?.click();if(id==='hostPin')document.querySelector('[data-action=createRoom]')?.click()});
+document.addEventListener('keydown',e=>{if(e.key!=='Enter')return;const id=document.activeElement?.id;if(id==='joinRoomId')document.querySelector('[data-action=openRoomById]')?.click();if(id==='joinPin'||id==='joinPinConfirm')document.querySelector('[data-action=enterRoom]')?.click();if(id==='hostPin')document.querySelector('[data-action=createRoom]')?.click();if(id==='joinProjectURL')document.querySelector('[data-action=joinByProjectLink]')?.click()});
