@@ -3,7 +3,7 @@ const DAYS=['Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7','Chủ N
 const SLOTS=[['Ca 1','07:00','09:15'],['Ca 2','09:30','11:45'],['Ca 3','12:30','14:45'],['Ca 4','15:00','17:15'],['Ca 5','17:30','19:45'],['Ca 6','19:45','21:30']];
 const STATUS={todo:'Cần làm',progress:'Đang làm',review:'Chờ duyệt',done:'Hoàn thành'};
 const COLORS=['#6268e8','#0e9fcb','#19a576','#ed9d36','#a36be8','#e46b92','#64748b','#0d9488'];
-const ACTIVE_TABS={overview:'Tổng quan',schedule:'Lịch rảnh',tasks:'Kanban & Task',report:'Đóng góp'};
+const ACTIVE_TABS={overview:'Tổng quan',schedule:'Lịch rảnh',tasks:'Nhiệm Vụ',report:'Đóng góp'};
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog');
 let current=null,roomId='',session=null,tab='overview',editingBusy=false,drag=null,banner='',chart=null,pollTimer=null,rouletteResult='',lastInvites=null,working=false;
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
