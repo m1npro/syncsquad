@@ -60,3 +60,27 @@ CREATE INDEX IF NOT EXISTS sync_members_room_idx ON sync_members(room_id);
 CREATE INDEX IF NOT EXISTS sync_busy_room_idx ON sync_busy(room_id);
 CREATE INDEX IF NOT EXISTS sync_sessions_member_idx ON sync_sessions(member_id);
 CREATE INDEX IF NOT EXISTS sync_sessions_expiry_idx ON sync_sessions(expires_at);
+
+
+-- Multiple independent projects inside one existing student room.
+-- Migration is non-destructive: preserves prior rooms and assigns existing tasks to "Đồ án chính".
+CREATE TABLE IF NOT EXISTS sync_projects (
+  id text PRIMARY KEY,
+  room_id text NOT NULL REFERENCES sync_rooms(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  is_default boolean NOT NULL DEFAULT false,
+  created_by text REFERENCES sync_members(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sync_projects_room_name_unique ON sync_projects(room_id, lower(name));
+CREATE UNIQUE INDEX IF NOT EXISTS sync_projects_room_id_unique ON sync_projects(room_id,id);
+CREATE INDEX IF NOT EXISTS sync_projects_room_idx ON sync_projects(room_id);
+INSERT INTO sync_projects(id,room_id,name,description,is_default)
+SELECT 'prj-' || id, id, 'Đồ án chính', 'Đồ án đầu tiên trong nhóm', true FROM sync_rooms
+ON CONFLICT(id) DO NOTHING;
+ALTER TABLE sync_tasks ADD COLUMN IF NOT EXISTS project_id text REFERENCES sync_projects(id);
+UPDATE sync_tasks SET project_id='prj-' || room_id WHERE project_id IS NULL;
+ALTER TABLE sync_tasks ALTER COLUMN project_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS sync_tasks_project_idx ON sync_tasks(project_id);
