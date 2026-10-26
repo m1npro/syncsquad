@@ -10,7 +10,7 @@ SyncSquad dùng HTML5, Tailwind CSS (CDN), Vanilla JavaScript và Neon PostgreSQ
 - Tên **đã tham gia** phải nhập đúng PIN để khôi phục phiên trên thiết bị khác. Nhập sai nhiều lần sẽ khóa tạm 15 phút.
 - Phiên đăng nhập lưu trong LocalStorage của chính trình duyệt và xác thực qua API. Các bản ghi phòng, lịch, nhiệm vụ dùng chung được lưu trên Neon.
 - Ma trận 6 ca × 7 ngày, parser thời khóa biểu, gợi ý giờ vàng và Google Calendar.
-- Kanban **Nhiệm Vụ** gồm 4 trạng thái, proof-of-work, đánh giá chéo, vòng quay chia task.
+- Kanban **Nhiệm Vụ** gồm 4 trạng thái, proof-of-work và vòng quay phân công do trưởng nhóm điều khiển.
 - SOS nhóm, biểu đồ điểm đóng góp, xuất Markdown và in/PDF.
 - Trưởng nhóm có quyền chỉnh tên phòng và môn học. Thành viên không thể tự nâng thành trưởng nhóm.
 
@@ -31,7 +31,9 @@ SyncSquad dùng HTML5, Tailwind CSS (CDN), Vanilla JavaScript và Neon PostgreSQ
 ## Bảo mật / giới hạn
 - PIN 4 số chỉ là cơ chế bảo vệ cơ bản, không tương đương xác minh email hoặc SSO. Người nhận tên trước sẽ khóa tên; trưởng nhóm phải tạo phòng bằng PIN của chính mình và bảo mật mã PIN.
 - Thành viên đã quên PIN sẽ cần cơ chế xác minh và khôi phục được bổ sung sau; không có tính năng reset PIN tự động.
-- API duyệt task kiểm tra người xác nhận không phải người được giao việc.
+- **Chỉ trưởng nhóm** được tạo/sửa/phân công nhiệm vụ và xác nhận hoàn thành (kiểm tra quyền ở phía API, không chỉ ở UI).
+- Thành viên chỉ được đổi trạng thái nhiệm vụ được giao; để Chờ duyệt phải có link HTTPS GitHub, Google Drive hoặc Figma.
+- Khi duyệt, API yêu cầu nhiệm vụ có người phụ trách, có bằng chứng và đang ở trạng thái Review. Trưởng nhóm cũng có thể xác nhận nhiệm vụ của chính mình, nhưng ứng dụng hiển thị nhãn **Trưởng nhóm tự xác nhận** để minh bạch.
 - Không công bố hoặc commit `DATABASE_URL`. Chỉ lưu trong biến môi trường server của Vercel.
 - Các phòng cũ vẫn tồn tại; không tự động xóa hay di chuyển dữ liệu.
 
@@ -49,3 +51,8 @@ SyncSquad dùng HTML5, Tailwind CSS (CDN), Vanilla JavaScript và Neon PostgreSQ
 - `POST /api/room` `action=project_edit` (host): cập nhật tên, mô tả.
 - Tất cả hành động thao tác nhiệm vụ phải gửi `projectId` hợp lệ, thuộc cùng phòng người dùng.
 - Dữ liệu task cũ được giữ trong đồ án mặc định khi chạy `db/schema.sql`.
+
+## Khắc phục lỗi 23502 khi tạo nhiệm vụ
+- Mã nhiệm vụ (`project_id`) bắt buộc từ khi hỗ trợ nhiều đồ án. Tạo nhiệm vụ gửi `projectId` là ID đồ án đang chọn, API kiểm tra ID thuộc đúng phòng và ghi vào cột `sync_tasks.project_id`.
+- PostgreSQL 23502 là lỗi thiếu dữ liệu NOT NULL; frontend nay hiển thị lỗi cụ thể tại hộp tạo nhiệm vụ.
+- Cấu trúc PostgreSQL mới đã được triển khai và các nhiệm vụ trước đây được liên kết đến đồ án chính.
