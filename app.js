@@ -25,6 +25,8 @@ function toggleSidebar(){
 window.addEventListener('resize',syncSidebarScrollLock);
 const projects=()=>current?.projects||[];
 const activeProject=()=>projects().find(p=>p.id===selectedProjectId)||projects()[0]||null;
+const canManageProject=p=>Boolean(p&&(you()?.role==='admin'||p.created_by===you()?.id));
+const projectURL=(id,room=roomId)=>location.origin+'/?room='+encodeURIComponent(room)+'&project='+encodeURIComponent(id);
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon=(name,size=17)=>`<i data-lucide="${name}" width="${size}" height="${size}"></i>`;
 const people=()=>current?.members||[];
@@ -137,15 +139,12 @@ function bestSlots(){const rows=[];for(let d=0;d<7;d++)for(let s=0;s<6;s++)rows.
 
 
 function roomProjectHub(){
- const active=activeProject();
- const admin=you()?.role==='admin';
  return `<section class="room-project-hub ${roomProjectMenuOpen?'expanded':''}" aria-label="Nhóm và đồ án">
     <button type="button" class="room-project-trigger" data-action="toggleRoomProjects" aria-expanded="${roomProjectMenuOpen}" aria-controls="roomProjectChoices">
       <span class="room-symbol">S</span>
       <span class="room-project-meta">
         <b title="${escapeHTML(current.room.name)}">${escapeHTML(current.room.name)}</b>
         <small title="${escapeHTML(current.room.id+' · '+current.room.subject)}">${escapeHTML(current.room.id)} · ${escapeHTML(current.room.subject)}</small>
-        <span class="room-active-project">${icon('folder',13)} <span title="${escapeHTML(active?.name||'Đồ án chính')}">${escapeHTML(active?.name||'Đồ án chính')}</span></span>
       </span>
       <span class="room-project-chevron">${icon(roomProjectMenuOpen?'chevron-up':'chevron-down',16)}</span>
     </button>
@@ -158,24 +157,62 @@ function roomProjectHub(){
             <span class="room-project-option-info"><b>${escapeHTML(p.name)}</b><small>${p.done_count}/${p.task_count} nhiệm vụ hoàn thành</small></span>
             ${p.id===selectedProjectId?icon('check',15):icon('arrow-up-right',15)}
           </button>
-          ${admin?`<button class="room-project-edit" type="button" data-action="editProject" data-id="${escapeHTML(p.id)}" aria-label="Chỉnh sửa đồ án ${escapeHTML(p.name)}" title="Chỉnh sửa đồ án">${icon('pencil',14)}</button>`:''}
+          <button type="button" class="room-project-edit" data-action="copyProjectLink" data-id="${escapeHTML(p.id)}" aria-label="Sao chép link đồ án ${escapeHTML(p.name)}" title="Copy link đồ án">${icon('link',14)}</button>
+          ${canManageProject(p)?`<button class="room-project-edit" type="button" data-action="editProject" data-id="${escapeHTML(p.id)}" aria-label="Chỉnh sửa đồ án ${escapeHTML(p.name)}" title="Chỉnh sửa đồ án">${icon('pencil',14)}</button>`:''}
         </div>`).join('')}
       </div>
-      ${admin?`<button type="button" class="room-project-create" data-action="newProject">${icon('plus-circle',16)} Tạo đồ án mới</button>`:''}
+      <button type="button" class="room-project-create" data-action="newProject">${icon('plus-circle',16)} Thêm đồ án mới</button>
       <p class="room-project-note">Cùng thành viên và một link phòng. Nhiệm vụ, điểm số được tính theo từng đồ án.</p>
     </div>
   </section>`;
 }
+
+function addProjectDialog(){
+ modal(`${modalHead('Thêm đồ án mới','Bạn có thể tham gia đồ án đã được chia sẻ hoặc tạo một đồ án của riêng mình.')}
+   <section class="project-add-section" aria-label="Tham gia đồ án bằng link">
+     <div class="project-add-section-head">
+       <span class="project-add-icon join">${icon('link-2',19)}</span>
+       <div><h3>Tham gia đồ án bằng link</h3><p>Dán link đồ án do thành viên khác chia sẻ.</p></div>
+     </div>
+     <label for="joinProjectURL">Link đồ án</label>
+     <input type="url" class="field" id="joinProjectURL"
+       placeholder="https://syncsquad-silk.vercel.app/?room=SS-...&project=..."
+       autocomplete="url" inputmode="url" spellcheck="false">
+     <button type="button" class="btn primary project-add-join" data-action="joinByProjectLink">${icon('arrow-right-to-line',16)} Tham gia đồ án</button>
+     <p class="project-add-help">Link chỉ cho phép bạn truy cập khi đã là thành viên của phòng chứa đồ án đó.</p>
+   </section>
+   <div class="project-add-divider" aria-hidden="true"><span>HOẶC</span></div>
+   <section class="project-add-section" aria-label="Tạo đồ án mới">
+     <div class="project-add-section-head">
+       <span class="project-add-icon create">${icon('folder-plus',19)}</span>
+       <div><h3>Tạo đồ án mới</h3><p>Tạo thêm một đồ án trong nhóm hiện tại. Mọi thành viên của phòng đều có thể tham gia.</p></div>
+     </div>
+     <button type="button" class="btn project-add-create" data-action="createProjectFromChooser">${icon('plus',17)} Tạo đồ án mới</button>
+   </section>`);
+ document.getElementById('joinProjectURL')?.focus();
+}
+function parseProjectLink(input){
+ let url;
+ try{url=new URL(String(input||'').trim(),location.origin)}catch{throw Error('Link đồ án không hợp lệ.')}
+ const acceptedHosts=new Set([location.host,'syncsquad-silk.vercel.app','syncsquad-manhmovippro118-2842.vercel.app']);
+ if(url.protocol!=='https:'&&!((url.protocol==='http:')&&location.hostname==='localhost'))throw Error('Link đồ án phải dùng HTTPS.');
+ if(!acceptedHosts.has(url.host))throw Error('Chỉ hỗ trợ link đồ án SyncSquad.');
+ const externalRoom=(url.searchParams.get('room')||'').toUpperCase();
+ const externalProject=url.searchParams.get('project')||'';
+ if(!/^SS-[A-F0-9]{12}$/.test(externalRoom)||!/^[a-zA-Z0-9-]{8,90}$/.test(externalProject))
+   throw Error('Đây chưa phải link đồ án. Hãy nhờ người gửi bấm biểu tượng liên kết cạnh tên đồ án để sao chép link đúng.');
+ return {room:externalRoom,project:externalProject};
+}
 function projectDialog(p){
- if(you()?.role!=='admin')return toast('Chỉ trưởng nhóm được quản lý đồ án');
  const editing=Boolean(p?.id);
- modal(`${modalHead(editing?'Chỉnh sửa đồ án':'Tạo đồ án mới',editing?'Thay đổi tên và mô tả; nhiệm vụ không bị mất.':'Đồ án mới sẽ xuất hiện cho mọi thành viên của phòng.')}
+ if(editing&&!canManageProject(p))return toast('Chỉ người tạo hoặc trưởng nhóm được sửa đồ án');
+ modal(`${modalHead(editing?'Chỉnh sửa đồ án':'Tạo đồ án mới',editing?'Thay đổi tên và mô tả; nhiệm vụ không bị mất.':'Đồ án sẽ xuất hiện cho mọi thành viên trong phòng.')}
    <label for="projectName">Tên đồ án *</label><input class="field" id="projectName" maxlength="100"
       placeholder="Ví dụ: Website bán hàng, Đồ án môn CSDL..." value="${escapeHTML(p?.name||'')}">
    <label for="projectDescription">Mô tả đồ án</label>
    <textarea class="field parser" id="projectDescription" maxlength="600"
      placeholder="Mục tiêu, yêu cầu và phạm vi đồ án...">${escapeHTML(p?.description||'')}</textarea>
-   <div class="room-hint">Mỗi đồ án có Kanban Nhiệm Vụ và báo cáo đóng góp riêng. Lịch học và link mời nhóm không đổi.</div>
+   <div class="room-hint">Đồ án mới có bảng Nhiệm Vụ và báo cáo đóng góp riêng. Lịch rảnh, thành viên và link mời phòng vẫn dùng chung.</div>
    <div class="dialog-actions">${button('Hủy','close')}
      ${button(editing?'Lưu thay đổi':'Tạo đồ án','saveProject','check','btn primary',editing?`data-id="${escapeHTML(p.id)}"`:'')}</div>`);
 }
