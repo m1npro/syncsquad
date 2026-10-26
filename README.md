@@ -1,38 +1,42 @@
-# SyncSquad v2 — Đồng bộ phòng nhóm qua Neon PostgreSQL
+# SyncSquad — SPA quản lý nhóm học tập
 
-Website SPA sử dụng HTML5, Tailwind CDN, Vanilla JS (ES6+), Lucide, Chart.js, Canvas Confetti. Backend gồm đúng một hàm serverless `api/room.js` chạy trên Vercel. Dữ liệu ở Neon thay vì LocalStorage.
+SyncSquad dùng HTML5, Tailwind CSS (CDN), Vanilla JavaScript và Neon PostgreSQL, triển khai qua Vercel.
 
-## Các chức năng
+## Các tính năng
+- **Tạo phòng độc lập** cho từng nhóm, từ 3 đến 8 thành viên. Người đầu tiên là trưởng nhóm; khi tạo đặt PIN 4 chữ số.
+- **Một link mời chung** dạng `https://syncsquad-silk.vercel.app/?room=SS-XXXXXXXXXXXX`; không nhúng token phiên đăng nhập.
+- Người truy cập link thấy danh sách tên. Tên **chưa tham gia** có thể nhận bằng PIN 4 số; thao tác khóa tên nguyên tử trong Neon để ngăn hai người chọn trùng.
+- Tên **đã tham gia** phải nhập đúng PIN để khôi phục phiên trên thiết bị khác. Nhập sai nhiều lần sẽ khóa tạm 15 phút.
+- Phiên đăng nhập lưu trong LocalStorage của chính trình duyệt và xác thực qua API. Các bản ghi phòng, lịch, nhiệm vụ dùng chung được lưu trên Neon.
+- Ma trận 6 ca × 7 ngày, parser thời khóa biểu, gợi ý giờ vàng và Google Calendar.
+- Kanban **Nhiệm Vụ** gồm 4 trạng thái, proof-of-work, đánh giá chéo, vòng quay chia task.
+- SOS nhóm, biểu đồ điểm đóng góp, xuất Markdown và in/PDF.
+- Trưởng nhóm có quyền chỉnh tên phòng và môn học. Thành viên không thể tự nâng thành trưởng nhóm.
 
-- Tạo phòng và nhập từ 3–8 thành viên. Thành viên đầu tiên là trưởng nhóm.
-- Mỗi thành viên có một link mời `?room=SS-...#join=<token>`; link được lưu trong trình duyệt sau khi mở. Đổi danh tính chỉ áp dụng cho những thành viên đã được cấp link mời trên cùng thiết bị.
-- Ma trận 7 ngày × 6 ca; đánh dấu bận bằng chuột/kéo, Regex parser cho `Thứ X`, `Slot Y`, `Ca Z`, `Tiết Z`, heatmap, chốt lịch và Google Calendar.
-- Kanban 4 trạng thái; bằng chứng HTTPS Drive/GitHub/Figma và bắt buộc người khác duyệt mới cộng điểm.
-- Vòng quay Canvas phân công task chưa nhận, confetti và âm thanh.
-- SOS copy tin nhắn nhóm, báo động trên giao diện.
-- Chart.js báo cáo đóng góp, đánh giá chéo, huy hiệu MVP và Free-Rider, in/PDF hoặc copy Markdown.
-- Polling mỗi 15 giây để thấy dữ liệu được người khác cập nhật, mọi thao tác ghi vào Neon ngay.
+## Cấu hình
+1. Tạo Neon PostgreSQL và chạy `db/schema.sql` (an toàn với các bảng đã có).
+2. Trong Vercel → Settings → Environment Variables, đặt `DATABASE_URL` ở **Production** (và Preview nếu deploy preview).
+3. Repo triển khai từ thư mục gốc, Vercel tự phục vụ `index.html` và API ở `api/room.js`.
+4. Kiểm tra `/api/health`: phải trả `{"ok":true,"database":"connected"}`.
 
-## Triển khai Vercel
+## Dùng thử
+1. Mở URL chính không có `?room=`, tạo phòng với tên nhóm, môn học, danh sách thành viên và PIN trưởng nhóm.
+2. Bấm **Copy link phòng**, gửi một lần vào Zalo/Messenger/Discord.
+3. Mỗi thành viên truy cập link, chọn **Tôi là [tên]**, đặt PIN 4 số lần đầu, và sử dụng phòng.
+4. Nếu trên trình duyệt khác, chọn lại tên **Đã tham gia** và nhập PIN đã đặt.
+5. Muốn quay lại màn hình tạo phòng, chọn **Tạo phòng khác** trên màn hình nhận tên.
 
-1. Tạo một repository GitHub trống (có thể chọn Private), upload các file trong thư mục gốc repo này: `index.html`, `app.js`, `style.css`, `package.json`, `vercel.json`, `api/room.js`, `db/schema.sql`, `.gitignore`, `README.md`.
-2. Vercel → Project `syncsquad` → Settings → Git → Connect Git Repository, chọn repo vừa tạo. Nếu dự án hiện tại không thể liên kết thì Import Project từ repo và sau khi kiểm tra thành công, chuyển tên miền cũ sang project mới.
-3. Trên [Neon Console](https://console.neon.tech), mở đúng database và chạy `db/schema.sql` trong SQL Editor nếu bốn bảng chưa được tạo.
-4. Vercel → Project → Settings → Environment Variables → thêm `DATABASE_URL` bằng **connection string từ Neon**. Chọn Production và Preview. Không bỏ connection string vào mã nguồn; không gửi nó qua chat.
-5. Deploy / Redeploy sang Production. Test API bằng cách tạo phòng và chia sẻ link mời **của thành viên khác** sang chế độ ẩn danh. Refresh cả hai thiết bị để đối chiếu.
+## Bảo mật / giới hạn
+- PIN 4 số chỉ là cơ chế bảo vệ cơ bản, không tương đương xác minh email hoặc SSO. Người nhận tên trước sẽ khóa tên; trưởng nhóm phải tạo phòng bằng PIN của chính mình và bảo mật mã PIN.
+- Thành viên đã quên PIN sẽ cần cơ chế xác minh và khôi phục được bổ sung sau; không có tính năng reset PIN tự động.
+- API duyệt task kiểm tra người xác nhận không phải người được giao việc.
+- Không công bố hoặc commit `DATABASE_URL`. Chỉ lưu trong biến môi trường server của Vercel.
+- Các phòng cũ vẫn tồn tại; không tự động xóa hay di chuyển dữ liệu.
 
-### Kiểm tra
-
-Sau khi có `DATABASE_URL`:
-- `POST /api/room` với `{ "action":"create", "group":"...", "subject":"...", "members":["A","B","C"] }` tạo phòng và link.
-- `GET /api/room?room=SS-...` cần `Authorization: Bearer <member token>` để xem dữ liệu.
-- `POST /api/room` với action `busy_batch`, `task_create`, `task_edit`, `task_status`, `verify`, `roulette`, `member_add`, `member_invite`, `room_edit` yêu cầu cùng header.
-
-## Lưu ý an toàn / giới hạn
-
-- Room ID **không** phải mật khẩu. Chỉ link mời từng thành viên cho phép truy cập. Không đăng link mời lên nơi công khai.
-- Token đã tham gia sẽ được lưu ở LocalStorage của trình duyệt, nên người dùng máy tính chung cần xóa dữ liệu site sau khi dùng. Link mời có thể được trưởng nhóm cấp lại để thu hồi link cũ.
-- Xác minh task bị từ chối tại API khi người bấm duyệt là chính người được giao task. Trưởng nhóm có quyền cấp lại link của thành viên khác nên vẫn cần sự tin tưởng và quy chế nhóm phù hợp.
-- Chưa có đăng nhập bằng tài khoản đại học / email / Google OAuth, phân quyền nâng cao, chống spam/rate limiting, realtime push; v2 sử dụng polling 15 giây và link mời. Muốn đưa vào quy mô lớn cần auth + rate limiting + audit logs.
-- Dữ liệu LocalStorage phiên bản cũ **không tự động tải lên Neon**. Mẫu tạo phòng đọc sẵn danh sách thành viên cũ trên cùng trình duyệt; danh sách task và lịch bận cũ cần nhập lại hoặc bổ sung tiện ích nhập dữ liệu riêng.
-- Điểm chữ A+/A/B/C/D chỉ là quy tắc đề xuất theo phần trăm đóng góp, giảng viên cần phê duyệt chính sách thực tế.
+## API
+- `GET /api/room?room=...&public=1`: tên phòng và trạng thái đã nhận của các thành viên.
+- `POST /api/room` `action=create`: tạo phòng, trả credential trưởng nhóm.
+- `POST /api/room` `action=claim`: nhận tên lần đầu (PIN).
+- `POST /api/room` `action=pin_login`: đăng nhập lại khi tên đã nhận.
+- `POST /api/room` `action=logout`: thu hồi phiên.
+- `GET /api/room?room=...` (Bearer token): dữ liệu nội bộ phòng.
