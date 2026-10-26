@@ -64,3 +64,14 @@
  .project-intro>.panel-head{flex-direction:column;align-items:stretch}
  .project-intro>.panel-head>.btn{width:100%}
 }
+
+
+/* Task editor: clear project ownership and actionable validation feedback */
+.task-project-context{display:flex;align-items:center;gap:7px;padding:11px 12px;margin:4px 0 17px;background:#f2f3ff;color:#5e63be;border:1px solid #e6e7fb;border-radius:9px;font-size:11px}
+.task-project-context b{font-size:12px;color:#373b8b}
+.task-form-hint{display:flex;align-items:center;gap:8px;margin-top:14px;background:#f0f9f4;color:#287451;border-radius:8px;padding:10px 11px;font-size:11px;line-height:1.5}
+.task-form-hint svg{flex:none}
+.task-form-error{display:block;margin-top:12px;font-size:12px;line-height:1.5}
+.task-form-error[hidden]{display:none}
+.member-notice{display:inline-flex;align-items:center;font-size:11px;color:#8b95a6;background:#f2f3f8;border-radius:8px;padding:8px 11px}
+@media(max-width:710px){.member-notice{width:100%;white-space:normal}}
