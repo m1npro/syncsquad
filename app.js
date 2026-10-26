@@ -162,8 +162,8 @@ function roomProjectHub(){
           ${canManageProject(p)?`<button class="room-project-edit" type="button" data-action="editProject" data-id="${escapeHTML(p.id)}" aria-label="Chỉnh sửa đồ án ${escapeHTML(p.name)}" title="Chỉnh sửa đồ án">${icon('pencil',14)}</button>`:''}
         </div>`).join('')}
       </div>
-      <button type="button" class="room-project-create" data-action="newProject">${icon('plus-circle',16)} Thêm đồ án mới</button>
       <p class="room-project-note">Cùng thành viên và một link phòng. Nhiệm vụ, điểm số được tính theo từng đồ án.</p>
+      <button type="button" class="room-project-create" data-action="newProject">${icon('plus-circle',16)} Thêm đồ án mới</button>
     </div>
   </section>`;
 }
