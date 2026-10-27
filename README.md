@@ -10,7 +10,7 @@ SyncSquad dùng HTML5, Tailwind CSS (CDN), Vanilla JavaScript và Neon PostgreSQ
 - Tên **đã tham gia** phải nhập đúng PIN để khôi phục phiên trên thiết bị khác. Nhập sai nhiều lần sẽ khóa tạm 15 phút.
 - Phiên đăng nhập lưu trong LocalStorage của chính trình duyệt và xác thực qua API. Các bản ghi phòng, lịch, nhiệm vụ dùng chung được lưu trên Neon.
 - Ma trận 6 ca × 7 ngày, parser thời khóa biểu, gợi ý giờ vàng và Google Calendar.
-- Kanban **Nhiệm Vụ** gồm 4 trạng thái, proof-of-work và vòng quay phân công do trưởng nhóm điều khiển.
+- **Nhiệm Vụ** gồm 4 trạng thái, proof-of-work và vòng quay phân công do trưởng nhóm điều khiển.
 - SOS nhóm, biểu đồ Donut hiển thị phần trăm trực tiếp trên từng lát cắt (lát nhỏ có nhãn ở ngoài), xuất Markdown và in/PDF.
 - Trưởng nhóm có quyền chỉnh tên phòng và môn học. Thành viên không thể tự nâng thành trưởng nhóm.
 
