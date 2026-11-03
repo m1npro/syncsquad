@@ -1,0 +1,1 @@
+export default function Home(){return <main style={{fontFamily:'system-ui',maxWidth:680,margin:'8vh auto',padding:24,lineHeight:1.7}}><h1>MinPro License Demo</h1><p>Máy chủ cấp phép đang hoạt động. API: POST /api/license/check</p><p>Không có trang quản trị công khai.</p><a href="/api/health">Kiểm tra trạng thái API</a></main>}
